@@ -96,8 +96,8 @@ Because compiling XNU requires Apple's `iphoneos` SDK (available on macOS) and c
 
 > **GitHub Actions builds this on push**, but a run only produces artifacts — nothing is flashed
 > for you and no run proves the tablet boots. Download `xun-bootimg` (and `xun-kernel-payload` for
-> `payload.img`) from the run, then follow section 6 onwards. `UNIXNU_UNIQUE_CHIP_ID` must be set as
-> a repository secret or the `build-xnu` job stops at the payload step.
+> `payload.img`) from the run, then follow section 6 onwards. No secrets are required: the platform
+> seed is in `board.toml`, not in the CI configuration.
 
 ---
 

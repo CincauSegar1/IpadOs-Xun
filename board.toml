@@ -34,7 +34,15 @@ include = ["ArmDTPlatform", "ArmCpu", "GopFramebuffer", "SoftwareAES", "AppleKey
 # hdiutil, no loop device. That is why the root digests and volume UUIDs in [root] below are
 # filled from the expanded volume rather than from the archive header.
 [ipsw]
-url = "iPad_10.2_2021_27.2.1_24B156_Restore.ipsw"
+# The official restore image, not a filename. A local name works only on the machine that already
+# has the file next to the repository; in CI it resolves to a path that does not exist. Commands
+# that need the image read it over HTTP range requests (8 MiB blocks, 64 in flight), so nothing
+# downloads the full 9.9 GiB - `unixnu ipsw fetch` takes only the members it needs.
+#
+# To build from a local copy instead, set UNIXNU_IPSW (or pass --ipsw): that overrides this value
+# and takes either a path or a URL. Verified 2026-11-27: HTTP 200, Content-Length 10681565917,
+# Accept-Ranges: bytes - the same 10681565917 bytes as the local file.
+url = "https://updates.cdn-apple.com/2026FallFCS/6eeacb3e-d8d3-4618-a407-33baab59d8a0/iPad_10.2_2021_27.2.1_24B156_Restore.ipsw"
 product = "iPad12,1"
 version = "27.2.1"
 build = "24B156"
@@ -374,4 +382,18 @@ filesystems = false
 cpu_regs = "0,1,2,3,0x100,0x101,0x102,0x103"
 packed_data_ramdisk = true
 ipad_identity = true
-unique_chip_id = "required"          # the platform seed is not stored in any repository
+# The platform seed, and the reason it is written down rather than kept as a secret.
+#
+# /chosen/unique-chip-id (8 bytes, read as hex) is used for exactly two things in xnu-12377:
+# IOPlatformExpert::getPlatformUUID() hashes it with /chosen/chip-id and a fixed UUID space into
+# IOPlatformUUID, and pe_init.c copies it into gPlatformECID. Nothing compares it against Apple,
+# nothing derives keys from it, and no personalization is bound to it - so it is not a secret, and
+# a build that silently picks a different value produces a different IOPlatformUUID for no reason.
+# It is fixed here so the local build and CI agree.
+#
+# The value is sha256("xun/SM6225/IPadOS-27.2.1/24B156/platform-seed/v1")[:8], which anyone can
+# recompute; it is not copied from a real device. Together with the chip_id below - which
+# make-xun-adt.py reads as hex, so "207" is 0x207 = 519 - it yields
+# IOPlatformUUID 35817fce-eb79-5f3a-83ce-4e22280c1982, reproducible with the SHA-1 in
+# iokit/Kernel/IOPlatformExpert.cpp:2218.
+unique_chip_id = "a6c6ae3adb0c3534"

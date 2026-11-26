@@ -203,8 +203,10 @@ Three jobs, in order:
 | `build-xnu` | `macos-latest` | Generates both ADTs, fetches the touch firmware blobs, builds the kernel twice (the second pass links the real `ShengPlatformPower.cpp` against pass 1's `mach.macho`), stages the trust-cache bundle — the pinned digest is asserted, not printed — and builds `payload.img`. |
 | `package-bootimg` | `ubuntu-latest` | Assembles `boot.img` from the UEFI FD, `xun.dtb` and the payload, and fails if it exceeds 64 MiB. |
 
-The `build-xnu` job needs `UNIXNU_UNIQUE_CHIP_ID` as a repository secret, because the platform
-seed is deliberately not stored in this repository. Without it that job fails at the payload step.
+No repository secrets are needed. The platform seed lives in `board.toml` `[payload.adt]
+unique_chip_id`, so CI and a local build derive the same `IOPlatformUUID`; see the comment there
+for why it is not a secret. Setting `UNIXNU_UNIQUE_CHIP_ID` in the environment would override the
+board value and change that UUID.
 
 Local builds do not depend on any of this: `scripts/build-macos-local.sh` is the same pipeline
 driven from your own machine, and it is what the flashing guide uses.

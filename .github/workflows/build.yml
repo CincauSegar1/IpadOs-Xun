@@ -129,11 +129,27 @@ jobs:
           clang --version | head -n 1
           xcrun --sdk iphoneos --show-sdk-path
 
+      - name: Restore the extracted IPSW members
+        uses: actions/cache@v4
+        with:
+          # Keyed on the build identity, not the branch: the members are byte-identical for every
+          # commit that targets 24B156, and re-fetching them costs a few hundred MiB of range
+          # requests against Apple's CDN on every push.
+          path: UniXNU/out/ipsw/24B156
+          key: ipsw-members-24B156-j181ap-v1
+
       - name: Generate Apple Device Trees (.adt)
         run: |
           mkdir -p IpadOS-Xun/out/xun
-          python3 IpadOS-Xun/scripts/make-xun-adt.py --dram-size 0x200000000 --owned-memory-size 0x1B8000000 --ipad-identity --root-match-volume-uuid 043A9710-08A4-44CC-BA81-29F41495EE9F --boot-manifest-hash 033991f9751b0c3e5225fe66c3d7b773c4228fcccbe3805209b74ca187b1b37bf7f870cc96cd106ae9415ef0e7f30b2f --no-filesystems --output IpadOS-Xun/out/xun/xun-single.adt --cpu-regs 0
-          python3 IpadOS-Xun/scripts/make-xun-adt.py --dram-size 0x200000000 --owned-memory-size 0x1B8000000 --ipad-identity --root-match-volume-uuid 043A9710-08A4-44CC-BA81-29F41495EE9F --boot-manifest-hash 033991f9751b0c3e5225fe66c3d7b773c4228fcccbe3805209b74ca187b1b37bf7f870cc96cd106ae9415ef0e7f30b2f --no-filesystems --output IpadOS-Xun/out/xun/xun-smp.adt --cpu-regs 0,1,2,3,0x100,0x101,0x102,0x103
+          # Identity comes from board.toml [payload.adt], not from a literal here: /chosen/chip-id
+          # and /chosen/unique-chip-id are what IOPlatformExpert hashes into IOPlatformUUID, and an
+          # ADT built without them has no platform identity at all.
+          CHIP_ID=$(python3 -c "import tomllib;print(tomllib.load(open('IpadOS-Xun/board.toml','rb'))['payload']['adt']['chip_id'])")
+          UNIQUE_ID=$(python3 -c "import tomllib;print(tomllib.load(open('IpadOS-Xun/board.toml','rb'))['payload']['adt']['unique_chip_id'])")
+          echo "ADT identity: chip-id=$CHIP_ID unique-chip-id=$UNIQUE_ID"
+          ID_ARGS="--chip-id $CHIP_ID --unique-chip-id $UNIQUE_ID"
+          python3 IpadOS-Xun/scripts/make-xun-adt.py $ID_ARGS --dram-size 0x200000000 --owned-memory-size 0x1B8000000 --ipad-identity --root-match-volume-uuid 043A9710-08A4-44CC-BA81-29F41495EE9F --boot-manifest-hash 033991f9751b0c3e5225fe66c3d7b773c4228fcccbe3805209b74ca187b1b37bf7f870cc96cd106ae9415ef0e7f30b2f --no-filesystems --output IpadOS-Xun/out/xun/xun-single.adt --cpu-regs 0
+          python3 IpadOS-Xun/scripts/make-xun-adt.py $ID_ARGS --dram-size 0x200000000 --owned-memory-size 0x1B8000000 --ipad-identity --root-match-volume-uuid 043A9710-08A4-44CC-BA81-29F41495EE9F --boot-manifest-hash 033991f9751b0c3e5225fe66c3d7b773c4228fcccbe3805209b74ca187b1b37bf7f870cc96cd106ae9415ef0e7f30b2f --no-filesystems --output IpadOS-Xun/out/xun/xun-smp.adt --cpu-regs 0,1,2,3,0x100,0x101,0x102,0x103
           python3 IpadOS-Xun/scripts/inspect-adt.py IpadOS-Xun/out/xun/xun-single.adt
           python3 IpadOS-Xun/scripts/inspect-adt.py IpadOS-Xun/out/xun/xun-smp.adt --smp
 
@@ -169,6 +185,8 @@ jobs:
           assert cap_old in cap_text, 'Expected BOOTSTRAP_TABLE_SIZE 16-page entry missing'
           cap.write_text(cap_text.replace(cap_old, cap_new, 1))
           PY
+          # board.toml [ipsw] url is the official CDN URL; a cache miss streams only the members
+          # asked for, over HTTP range requests, rather than the whole 9.9 GiB archive.
           python3 unixnu ipsw fetch KernelCache OS -D ../IpadOS-Xun
           cp ../IpadOS-Xun/package/xnu-patches/native-smp-type-clusters.patch patches/xnu/
           python3 unixnu defconfig xun_defconfig -D ../IpadOS-Xun
@@ -181,9 +199,12 @@ jobs:
         working-directory: UniXNU
         env:
           UNIXNU_UEFI: ${{ github.workspace }}/Mu-Silicium
-          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
         run: |
           export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
+          # No UNIXNU_UNIQUE_CHIP_ID secret: board.toml [payload.adt] unique_chip_id carries the
+          # platform seed, and scripts/unixnu/payload.py only demands one from the environment when
+          # the board says "required". A key here would have silently overridden the board value
+          # and given the tablet a different IOPlatformUUID than a local build.
           python3 unixnu ipsw fetch StaticTrustCache Cryptex1,SystemTrustCache -D ../IpadOS-Xun
           python3 - <<'PY'
           import hashlib, struct, sys
