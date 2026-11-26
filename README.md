@@ -145,6 +145,16 @@ export UNIXNU_UEFI=/path/to/uefi-xun        # Mu-Silicium checkout with xunPkg
 scripts/build-macos-local.sh
 ```
 
+**Framework requirement.** `scripts/unixnu/payload.py` in the UniXNU framework builds the ADT
+command from a fixed list of `[payload.adt]` keys. This board needs `boot_manifest_hash` on that
+list (forwarded as `--boot-manifest-hash`) and `filesystems = false` (forwarded as
+`--no-filesystems`); a framework without them builds an ADT with no `/chosen/boot-manifest-hash`,
+and the boot then stops at `mount -P 1` without saying why. Check before building:
+
+```sh
+grep -n 'boot_manifest_hash' ../UniXNU/scripts/unixnu/payload.py
+```
+
 ### Linux / Termux
 
 Everything except the kernel itself:
