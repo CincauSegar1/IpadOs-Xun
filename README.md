@@ -208,6 +208,37 @@ unique_chip_id`, so CI and a local build derive the same `IOPlatformUUID`; see t
 for why it is not a secret. Setting `UNIXNU_UNIQUE_CHIP_ID` in the environment would override the
 board value and change that UUID.
 
+#### The bootstrap pass
+
+`unixnu build kernel` compiles the tree twice: a bootstrap pass whose only job is to leave compile
+records (`*.o.json`, `*.cpo.json`) and the `Kernel.framework` headers behind, then the real pass.
+The bootstrap pass is allowed to fail, and on a bare XNU it does — nothing is linked yet.
+
+On this board it would fail *too early*. `KERNEL_EXTRA_ARCHIVES` in `build-xnu-4k-baseline.sh` is
+gated on `BOOTSTRAP=0`, while `configs/xun_defconfig` selects `CONFIG_XNU_SOURCE_CORECRYPTO14`,
+`XNU_NATIVE_RAM_BLOCK` and `XNU_SHENG_PMGR`, which make the corecrypto, RamBlock and PMGR archives
+mandatory. The bootstrap link therefore cannot succeed, and it stops before
+`iokit/Kernel/IOPlatformExpert.cpp` is compiled. `scripts/build-xun-emmc.py` needs
+`IOPlatformExpert.cpo.json`, so it stops with `Missing .../IOPlatformExpert.cpo.json`, no
+`libXunEmmc.a` is produced, and the real pass then reports seven undefined symbols —
+`native_verified_block_*` and `native_ram_block_*` — whose providers live in that archive.
+
+`scripts/apply-bootstrap-link-skip.py` fixes the cause rather than the symptoms. With `BOOTSTRAP=1`
+the link prerequisite is dropped from `do_build_all`, so the pass compiles every object (and writes
+every record) and skips the link instead of failing it. The same script hands `BOOTSTRAP` to the
+`make` command line, because the build script keeps it in an unexported shell variable and
+`makedefs` would otherwise never see it. Both edits are applied to the UniXNU checkout at build
+time — CI fetches that tree fresh, so a file in this repository would not reach it — and
+`scripts/build-macos-local.sh` runs the same step.
+
+`package/RamBlockStubs.c` covers the two symbols that have no provider anywhere in this
+repository. `native_ram_block_volume_seed` and `native_ram_block_gpu_addon` are called from
+`offline-owner-systemos-mount.patch` gated on `XNU_NATIVE_RAM_BLOCK`, but their implementation lives
+in the `drivers/RamBlock` submodule of UniXNU, which this repository does not carry. The weak stubs
+return 0, so the Data volume path reports "no seed" instead of inventing a UUID, digest or size the
+hardware never reported. They are compiled into `build/ram-block-stubs/libRamBlockStubs.a` by
+`scripts/build-link-stubs.py`.
+
 Local builds do not depend on any of this: `scripts/build-macos-local.sh` is the same pipeline
 driven from your own machine, and it is what the flashing guide uses.
 

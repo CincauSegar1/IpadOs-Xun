@@ -114,6 +114,16 @@
   - `package-bootimg` (`ubuntu-latest`): assembles `boot.img` and fails above 64 MiB
 - **macOS Build Script:** `scripts/build-macos-local.sh`
   - Automates toolchain checks, ADT generation, trust cache staging, eMMC unit tests, and kernel compilation on local Hackintosh.
+  - Runs the same steps in the same order as the CI job, so a local build fails the way CI would instead of diverging.
+- **Bootstrap-link fix:** `scripts/apply-bootstrap-link-skip.py`
+  - `unixnu build kernel` runs a bootstrap pass first and tolerates its failure, because that pass only has to leave compile records. On this board the pass cannot link at all: `KERNEL_EXTRA_ARCHIVES` is gated on `BOOTSTRAP=0`, while the defconfig makes the corecrypto/RamBlock/PMGR archives mandatory.
+  - The pass therefore died before `iokit/Kernel/IOPlatformExpert.cpp` was compiled. `scripts/build-xun-emmc.py` reads `IOPlatformExpert.cpo.json`, stopped with `Missing .../IOPlatformExpert.cpo.json`, produced no `libXunEmmc.a`, and the real pass then reported seven undefined symbols whose providers live in that archive.
+  - The script drops the link prerequisite from `do_build_all` when `BOOTSTRAP=1`, so every object and record is produced and the link that could not have worked is skipped rather than failed. It also hands `BOOTSTRAP` to the `make` command line, since the build script keeps it in an unexported shell variable.
+  - Both edits go to the UniXNU checkout at build time; CI fetches that tree fresh, so a file here would not reach it. Retire the script once the framework makes `build_all` independent of `do_build_kernel` under `XNU_BOOTSTRAP`.
+- **RamBlock stubs:** `package/RamBlockStubs.c`
+  - Weak `native_ram_block_volume_seed` and `native_ram_block_gpu_addon`, signatures copied verbatim from the `offline-owner-systemos-mount.patch` call sites, both returning 0.
+  - Their implementation lives in the `drivers/RamBlock` submodule of UniXNU, which this repository does not carry, and no file in the UniXNU family defines them. Returning 0 makes the Data volume path report "no seed" rather than inventing a UUID, digest or size the hardware never reported.
+  - Compiled into `build/ram-block-stubs/libRamBlockStubs.a` by `scripts/build-link-stubs.py`.
 - **Panic & Retained Log Diagnostic Reader:** `UniXNU-xun/scripts/read-xun-log.py`
 
 ### 3c. Where the `[kernel.prelink]` values come from
