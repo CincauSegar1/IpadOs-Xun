@@ -114,6 +114,37 @@ def main():
         pending.append('[payload.adt] root_match_volume_uuid is empty: same value as [root] '
                        'os_volume_uuid')
 
+    # /chosen/boot-manifest-hash: mount(8) derives /private/preboot/<UPPERCASE HEX> from it and a
+    # failed read is fatal to the first mount, so it must be present and the root image must carry
+    # that directory. The image side cannot be checked here (there is no image in the checkout), so
+    # what is checked is that the value is well-formed and that build-simg.sh defaults to the same
+    # string - the two ways it goes wrong are a malformed hash and a drift between the ADT and the
+    # image builder.
+    bmh = toml_value(board, 'payload.adt', 'boot_manifest_hash')
+    bmh = unquote(bmh) if bmh else ''
+    if not bmh:
+        blocking.append('[payload.adt] boot_manifest_hash is empty: /chosen/boot-manifest-hash is '
+                        'the one input the iPadOS 27 first mount treats as fatal')
+    elif len(bmh) != 96 or any(c not in '0123456789abcdefABCDEF' for c in bmh):
+        blocking.append(f'[payload.adt] boot_manifest_hash is not 96 hex characters: {bmh!r}')
+    else:
+        simg = ROOT / 'tools/ipados27/build-simg.sh'
+        default = ''
+        if simg.is_file():
+            for line in simg.read_text().splitlines():
+                if line.startswith('PREBOOT_HASH='):
+                    default = line.split('=', 1)[1].strip().strip('"').strip()
+                    # Written as ${PREBOOT_HASH:-<default>} so a caller can override it.
+                    if default.startswith('${') and ':-' in default:
+                        default = default[2:].split(':-', 1)[1].rstrip('}')
+                    break
+        if default.lower() != bmh.lower():
+            blocking.append('tools/ipados27/build-simg.sh PREBOOT_HASH defaults to '
+                            f'{default or "(nothing)"} but board.toml boot_manifest_hash is {bmh}; '
+                            'the image and the ADT would disagree and mount -P 1 exits 66')
+        else:
+            ok.append('[payload.adt] boot_manifest_hash matches the image builder')
+
     series = ROOT / 'patches/xnu-27/series'
     listed = [l.strip() for l in series.read_text().splitlines()
               if l.strip() and not l.startswith('#')]

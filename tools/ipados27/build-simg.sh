@@ -11,6 +11,8 @@
 # Environment:
 #   OUT=...          output .simg (default: research/ipados27/ipados27-root-full.simg)
 #   SIZE=24g         HFS+ volume size passed to root-ipsw
+#   PREBOOT_HASH=... 96 hex chars for /private/preboot/<hash>, must equal board.toml
+#                    [payload.adt] boot_manifest_hash (default: this port's boot-set identity)
 #   NO_TOOLS=1       skip berga-tools.zip (no SSH / first-boot job / wallpaper in the image)
 #   TOOLS=...        an already downloaded berga-tools.zip
 #   SSH_KEY=...      public key installed for root SSH (default: research/ipados27/id_ed25519.pub)
@@ -99,8 +101,20 @@ if [ -z "${NO_TOOLS:-0}" ] && [ ! -f "$SSH_KEY" ]; then
 	command -v ssh-keygen >/dev/null && ssh-keygen -t ed25519 -N '' -C ipados27 -f "${SSH_KEY%.pub}"
 fi
 
+# --- the boot-set directory mount(8) names from /chosen/boot-manifest-hash ---------------------
+# The iPadOS 27 userland's first act is `mount -P 1`, and the one input it treats as fatal is
+# /chosen/boot-manifest-hash: it binds /private/preboot/<UPPERCASE HEX>/usr/standalone/firmware over
+# /usr/standalone/firmware, and a failed read there is exit 66. The root volume is read-only at
+# runtime, so the directory has to be in the image. The hash must be the same one board.toml
+# [payload.adt] boot_manifest_hash hands to the ADT.
+PREBOOT_HASH=${PREBOOT_HASH:-033991f9751b0c3e5225fe66c3d7b773c4228fcccbe3805209b74ca187b1b37bf7f870cc96cd106ae9415ef0e7f30b2f}
+if [ "${#PREBOOT_HASH}" -ne 96 ]; then
+	echo "PREBOOT_HASH must be 96 hex characters (it is ${#PREBOOT_HASH})" >&2
+	exit 2
+fi
+
 # --- the image -------------------------------------------------------------------------------
-ARGS=(root-ipsw "$IPSW" "$OUT" --size "$SIZE" --now "$(date +%s)")
+ARGS=(root-ipsw "$IPSW" "$OUT" --size "$SIZE" --now "$(date +%s)" --preboot-hash "$PREBOOT_HASH")
 [ -n "$TOOLS" ] && ARGS+=(--tools "$TOOLS")
 [ -n "${SSH_KEY:-}" ] && [ -f "$SSH_KEY" ] && ARGS+=(--ssh-key "$SSH_KEY")
 
