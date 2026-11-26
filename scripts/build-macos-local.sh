@@ -80,8 +80,11 @@ if [ -d "${UNIXNU_DIR}" ]; then
     pushd "${UNIXNU_DIR}" >/dev/null
     python3 unixnu defconfig xun_defconfig -D "${DEVICE_DIR}"
     # Same bootstrap-link fix the CI job applies; a local build without it stops at the link with
-    # undefined native_verified_block_*/native_ram_block_* symbols.
-    python3 "${DEVICE_DIR}/scripts/apply-bootstrap-link-skip.py" .
+    # undefined native_verified_block_*/native_ram_block_* symbols. The XNU tree does not exist yet
+    # at this point, so this patches the build script and the script calls itself again once the
+    # .cache/xnu-work clone is there.
+    export IPADOS_XUN_BOOTSTRAP_FIX="${DEVICE_DIR}/scripts/apply-bootstrap-link-skip.py"
+    python3 "${IPADOS_XUN_BOOTSTRAP_FIX}" .
     python3 unixnu build kernel -D "${DEVICE_DIR}"
     python3 unixnu build payload -D "${DEVICE_DIR}" || true
     popd >/dev/null

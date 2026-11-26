@@ -171,6 +171,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           UNIXNU_UEFI: ${{ github.workspace }}/Mu-Silicium
+          # The XNU source tree does not exist until the build creates .cache/xnu-work, so the fix
+          # cannot be applied from here alone: the build script calls the script again right after
+          # the clone. This variable is how it finds it.
+          IPADOS_XUN_BOOTSTRAP_FIX: ${{ github.workspace }}/IpadOS-Xun/scripts/apply-bootstrap-link-skip.py
         run: |
           export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
           python3 - <<'PY'

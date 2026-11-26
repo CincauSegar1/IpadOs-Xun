@@ -25,7 +25,7 @@ symptoms, none of them pointing at the bootstrap pass.
 
 What this changes
 -----------------
-Two edits, both against the UniXNU checkout:
+Two edits, both inside the XNU source tree:
 
 1. `makedefs/MakeInc.kernel` - at component level the target that compiles every object and writes
    the file list is `do_all`:
@@ -45,6 +45,21 @@ Two edits, both against the UniXNU checkout:
    not export it, and its make command line does not pass it either, so without this edit the new
    conditional would never be true. The patch adds `BOOTSTRAP="$BOOTSTRAP"` to the make command
    line, the same way the script already hands over LD_KERNEL_ARCHIVES.
+
+Where the tree is, and why this runs itself twice
+--------------------------------------------------
+There is no XNU source at the UniXNU root: the drivers build against a checkout at
+`{tree}/.cache/xnu-work`, and that clone is made either by `unixnu/patches.py` or by
+`build-xnu-4k-baseline.sh` line 34, whichever runs first. So on a cold checkout the tree does not
+exist when a CI step would naturally call this script, and the first version of it did exactly that
+and stopped with "no makedefs/MakeInc.kernel".
+
+The fix is that the second edit (the one to `build-xnu-4k-baseline.sh`, which always exists) also
+inserts a call to this script immediately after the `.cache/xnu-work` clone. The run from CI patches
+the build script and stops; the build script then reaches the clone, finds the tree, and this script
+runs again from inside it, from the UniXNU root, and patches the tree. Every step is idempotent, so
+a warm checkout - where the clone already exists and patches.prepare has run - simply finishes the
+makefile edit on the first pass.
 
 Applied to the UniXNU checkout at build time, not carried here, because UniXNU is checked out fresh
 by CI and a file in this repository would not reach it.
@@ -87,52 +102,118 @@ endif
 SCRIPT_MARKER = '# --- IpadOS-Xun: hand BOOTSTRAP to make ---'
 SCRIPT_OLD = '  CFLAGS_EXTRA="$EXTRA_CFLAGS" "${EXTRA_MAKE_ARGS[@]}"'
 SCRIPT_NEW = '  CFLAGS_EXTRA="$EXTRA_CFLAGS" "${EXTRA_MAKE_ARGS[@]}" BOOTSTRAP="$BOOTSTRAP"'
+BOOTSTRAP_ASSIGNMENT = 'BOOTSTRAP=${XNU_BOOTSTRAP:-0}'
+
+# The clone of .cache/xnu-work: once it exists, makedefs/MakeInc.kernel can be patched. Line 34 is
+# the same in this script and in unixnu/patches.py, which may create the tree first.
+CLONE_OLD = 'if [ ! -d .cache/xnu-work/.git ]; then'
+HOOK_MARKER = '# --- IpadOS-Xun: patch the XNU tree as soon as it exists ---'
+HOOK_NEW = (
+    HOOK_MARKER + '\n'
+    '# Patches makedefs/MakeInc.kernel so the bootstrap pass compiles every object and skips the link\n'
+    '# it cannot make, and hands BOOTSTRAP to make. Idempotent; a no-op once both edits are in place.\n'
+    'if [ -n "${IPADOS_XUN_BOOTSTRAP_FIX:-}" ]; then\n'
+    '  python3 "$IPADOS_XUN_BOOTSTRAP_FIX" "$ROOT" || exit 1\n'
+    'fi\n'
+    ''
+)
+
+
+def find_xnu_tree(start):
+    """Return the XNU source tree that carries makedefs/MakeInc.kernel.
+
+    The tree is `{unixnu}/.cache/xnu-work`, a clone the framework makes just before it compiles.
+    Nothing is created here: if it does not exist yet the caller is simply running too early, and
+    saying so is better than patching a directory that is about to be replaced by a fresh clone.
+    """
+    start = start.resolve()
+    for candidate in (start, start / '.cache/xnu-work'):
+        if (candidate / 'makedefs/MakeInc.kernel').is_file():
+            return candidate
+    # out/xun/tree and out/feeds/xnu-* are the other places a prepared tree can sit, depending on
+    # which stage last touched it.
+    for pattern in ('out/*/tree', 'out/feeds/xnu-*'):
+        for candidate in sorted(start.glob(pattern)):
+            if (candidate / 'makedefs/MakeInc.kernel').is_file():
+                return candidate
+    return None
+
+
+def patch_makefile(tree):
+    path = tree / 'makedefs/MakeInc.kernel'
+    text = path.read_text()
+    if MAKE_MARKER in text:
+        print(f'apply-bootstrap-link-skip: {path} already carries the change')
+        return 0
+    if MAKE_OLD not in text:
+        print(f'apply-bootstrap-link-skip: expected do_build_all anchor missing from {path}. '
+              f'UniXNU changed that rule; re-read this script before trusting the build.',
+              file=sys.stderr)
+        raise SystemExit(1)
+    path.write_text(text.replace(MAKE_OLD, MAKE_NEW, 1))
+    print(f'apply-bootstrap-link-skip: patched {path}')
+    return 1
+
+
+def patch_build_script(tree):
+    path = tree / 'scripts/build-xnu-4k-baseline.sh'
+    if not path.is_file():
+        print(f'apply-bootstrap-link-skip: no {path}', file=sys.stderr)
+        raise SystemExit(1)
+    text = path.read_text()
+    if SCRIPT_MARKER in text:
+        print(f'apply-bootstrap-link-skip: {path} already carries the change')
+        return 0
+    if SCRIPT_OLD not in text:
+        print(f'apply-bootstrap-link-skip: expected make invocation missing from {path}. UniXNU '
+              f'changed how it calls make; re-read this script before trusting the build.',
+              file=sys.stderr)
+        raise SystemExit(1)
+    if BOOTSTRAP_ASSIGNMENT not in text:
+        print(f'apply-bootstrap-link-skip: no {BOOTSTRAP_ASSIGNMENT!r} in {path}; the conditional '
+              f'would never be true.', file=sys.stderr)
+        raise SystemExit(1)
+    text = text.replace(SCRIPT_OLD, SCRIPT_NEW, 1)
+    # The note goes above the assignment, not above the make line: that line runs across several
+    # backslash continuations, so a "#" after its arguments would comment out the rest of it, and
+    # nothing may be prepended to the file because line 1 is the shebang.
+    text = text.replace(BOOTSTRAP_ASSIGNMENT,
+                        f'{SCRIPT_MARKER}\n{BOOTSTRAP_ASSIGNMENT}', 1)
+    if HOOK_MARKER not in text:
+        if CLONE_OLD not in text:
+            print(f'apply-bootstrap-link-skip: no {CLONE_OLD!r} in {path}; cannot hook the clone.',
+                  file=sys.stderr)
+            raise SystemExit(1)
+        text = text.replace(CLONE_OLD, HOOK_NEW + CLONE_OLD, 1)
+    path.write_text(text)
+    print(f'apply-bootstrap-link-skip: patched {path}')
+    return 1
 
 
 def main(argv):
-    tree = Path(argv[1]) if len(argv) > 1 else Path('.')
-    changed = 0
+    root = Path(argv[1]) if len(argv) > 1 else Path('.')
 
-    makefile = tree / 'makedefs/MakeInc.kernel'
-    script = tree / 'scripts/build-xnu-4k-baseline.sh'
-    for path in (makefile, script):
-        if not path.is_file():
-            print(f'apply-bootstrap-link-skip: no {path}; is this the UniXNU tree?', file=sys.stderr)
+    # The build script is at the UniXNU root and always exists; the XNU tree may not yet.
+    uni = root.resolve()
+    if not (uni / 'scripts/build-xnu-4k-baseline.sh').is_file():
+        candidate = uni / 'UniXNU'
+        if (candidate / 'scripts/build-xnu-4k-baseline.sh').is_file():
+            uni = candidate
+        else:
+            print(f'apply-bootstrap-link-skip: no scripts/build-xnu-4k-baseline.sh under '
+                  f'{root.resolve()}; is this the UniXNU tree?', file=sys.stderr)
             return 2
 
-    make_text = makefile.read_text()
-    if MAKE_MARKER in make_text:
-        print(f'apply-bootstrap-link-skip: {makefile} already carries the change')
-    else:
-        if MAKE_OLD not in make_text:
-            print(f'apply-bootstrap-link-skip: expected do_build_all anchor missing from {makefile}. '
-                  f'UniXNU changed that rule; re-read this script before trusting the build.',
-                  file=sys.stderr)
-            return 1
-        makefile.write_text(make_text.replace(MAKE_OLD, MAKE_NEW, 1))
-        print(f'apply-bootstrap-link-skip: patched {makefile}')
-        changed += 1
+    changed = patch_build_script(uni)
 
-    script_text = script.read_text()
-    if SCRIPT_MARKER in script_text:
-        print(f'apply-bootstrap-link-skip: {script} already carries the change')
+    tree = find_xnu_tree(uni)
+    if tree is None:
+        # Expected on a cold checkout: the clone does not exist yet, and the build script now calls
+        # this script again right after making it.
+        print('apply-bootstrap-link-skip: XNU tree not created yet; the build script will call '
+              'this script again once it is (see the hook above the .cache/xnu-work clone)')
     else:
-        if SCRIPT_OLD not in script_text:
-            print(f'apply-bootstrap-link-skip: expected make invocation missing from {script}. '
-                  f'UniXNU changed how it calls make; re-read this script before trusting the build.',
-                  file=sys.stderr)
-            return 1
-        patched = script_text.replace(SCRIPT_OLD, SCRIPT_NEW, 1)
-        # The note goes above the BOOTSTRAP assignment, not above the make line: that line runs
-        # across several backslash continuations, so a "#" placed after its arguments would comment
-        # out the rest of the command, and nothing may be prepended to the file either because line
-        # 1 is the shebang.
-        anchor = 'BOOTSTRAP=${XNU_BOOTSTRAP:-0}'
-        assert anchor in patched, 'BOOTSTRAP assignment missing from build-xnu-4k-baseline.sh'
-        patched = patched.replace(anchor, f'{SCRIPT_MARKER}\n{anchor}', 1)
-        script.write_text(patched)
-        print(f'apply-bootstrap-link-skip: patched {script}')
-        changed += 1
+        changed += patch_makefile(tree)
 
     if not changed:
         print('apply-bootstrap-link-skip: nothing to do')
