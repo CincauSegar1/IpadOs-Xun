@@ -94,13 +94,15 @@
   `dtrace_early_init()` panics on `machine_routines.c:3379`.
 
 ### 4. eMMC 5.1 Storage Driver & 512-Byte Sector Unit Tests
-- **Driver:** `UniXNU-xun/drivers/XunEmmc`
+- **Driver:** `drivers/XunEmmc`
   - `Info.plist`, `RootLayout.h`, `NativeEmmc.cpp`
   - Qualcomm SDHCI MSM at `0x04744000`
   - 512-byte sector size
   - Userdata start LBA: `20129584` (`0x1332730`), byte offset: `0x2664e6000` (10,306,347,008 bytes)
-  - Userdata last LBA: `244318207` (`0xe8fffff`)
-- **Unit Test:** `UniXNU-xun/drivers/XunEmmc/tests/check_xun_emmc_root.py`
+  - Userdata last LBA: `244244958` (`0xe8f5fde`) — the span is exactly 114,763,587,072 bytes.
+    0xe8fffff came from the sheng line and is 20,988,416 bytes larger than the partition xun
+    actually has, so an image built for it does not fit and fastboot rejects the write.
+- **Unit Test:** `drivers/XunEmmc/tests/check_xun_emmc_root.py`
   - Validates LBA 1 GPT Header, LBA 2..33 Partition Entries array (128 entries)
   - Validates `userdata` partition resolution and 512-byte byte offset translation
   - Validates `SHNGROOT` manifest header (magic, 3 slices: OS, SystemOS, Data) and `SHNGPOL1` policy locator block at offset 4096.
@@ -108,10 +110,42 @@
 ### 5. Turnkey CI & macOS Local Build Pipelines
 - **GitHub Actions Workflow:** `UniXNU-xun/.github/workflows/build.yml`
   - `build-uefi` (`ubuntu-latest`): builds `SILICIUM_UEFI.fd` using Clang + EDK2 BaseTools
-  - `build-xnu` (`macos-14`): compiles `kernel.macho` and `.adt` with Xcode `iphoneos` SDK and `MACHINE_CONFIGS=BCM2837`
-- **macOS Build Script:** `UniXNU-xun/scripts/build-macos-local.sh`
+  - `build-xnu` (`macos-latest`): compiles `kernel.macho` and `.adt` with Xcode `iphoneos` SDK and `MACHINE_CONFIGS=BCM2837`; selects the newest Xcode 26+ on the image and needs Clang 20+
+  - `package-bootimg` (`ubuntu-latest`): assembles `boot.img` and fails above 64 MiB
+- **macOS Build Script:** `scripts/build-macos-local.sh`
   - Automates toolchain checks, ADT generation, trust cache staging, eMMC unit tests, and kernel compilation on local Hackintosh.
 - **Panic & Retained Log Diagnostic Reader:** `UniXNU-xun/scripts/read-xun-log.py`
+
+### 3c. Where the `[kernel.prelink]` values come from
+- `kernelcache_sha256` is the digest of `kernelcache.release.ipad12p` **as shipped in the IPSW**
+  (21,687,452 bytes, `e9f46648e9a4840de016e6dd90e3ea3f9980811fb6e51efd97812572456a9633`). It is
+  what the prelink is cut against, so it is the stock artefact and not a build of ours.
+- `early_security_init` is an address **inside our built kernelcache**, so no stock artefact can
+  supply it. Copying `0xfffffff005ab4ae0` from the 21H461 line, or the reference board's value,
+  produces a kernel that links and boots until AMFI — the least debuggable place a wrong number
+  can land. It stays empty until there is a
+  `build/xnu/ios-obj/.../mach.development.*.unstripped.noctf` to read it from, by symbol:
+  `scripts/inspect-prelink-callsite.py --symbol early_security_init <our-kernel>`.
+- Same rule for the `native-stack-shift` binding: the patch defines
+  `unixnu_kernel_stack_shift`, but what makes it take effect is a prelink fixture entry for the one
+  GOT slot AMFI reads `PAGE_SHIFT_CONST` from, and that fixture is generated from the built
+  kernelcache too.
+
+### 3d. The SoC layer, and the two patches that replaced it
+- `UniXNU-muyu` gets two patches through `soc:patches/xnu-12377/series` in
+  `UniXNU-sm7675-common`: `sheng-platform-power` and `native-smp-secondary`. The SM6225
+  equivalent (`github.com/UniXNU/UniXNU-sm6225-common`) returns 404, checked twice.
+- Both of those patches turn out to be generic — neither names an SM7675 register — so they are
+  carried here as device patches instead of a series line that cannot resolve:
+  - `xun-pmgr-bringup` — `build-platform-power.py` archives `sheng_pmgr_run()` (a no-op stub when
+    there is no reference kernel) and **nothing called it**. The PMGR nub was linked and
+    unreachable, so the power and clock domains the iPadOS 27 userland asks for never appeared.
+  - `xun-clustered-mpidr` — the A73 cores report MPIDR `0x100..0x103`. `start.s` masks MPIDR with
+    `0xFF` unless `HAS_CLUSTER`, which folds all four onto the A53 numbers, so the secondary start
+    never selects a distinct entry for them. The patch uses `0xFFFF` under a new
+    `CONFIG_XNU_QCOM_CLUSTERED_MPIDR`.
+- `scripts/check-board-os.py` now fails if `patch_series` names a `soc:` layer that `feeds.toml`
+  cannot resolve, so the two cannot drift apart again.
 
 ## Verified Hardware Parameters
 - **SoC:** Qualcomm Snapdragon 680 4G (`SM6225`, `soc_id = 518`, `khaje` / `divar`)

@@ -72,20 +72,26 @@ the `BuildManifest`. The container digests and the trust-cache payload digests a
 
 The kernel is **built from source**, not lifted out of the restore image. The image's
 `kernelcache.release.ipad12p` is a signed Apple artefact for A13; it is not what runs here. What
-runs here is `xnu-12377.121.6` with four patch layers applied:
+runs here is `xnu-12377.121.6` with three patch layers applied:
 
 | Layer | Source | Patches |
 | --- | --- | --- |
 | `arch` | `UniXNU/profiles/arch/arm64e/patches/xnu/series` | 64 |
-| `soc` | the SM6225 SoC layer (`feeds.toml`) | 2 |
 | `os` | `profiles/os/ipados-27.2.1-24B156/patches/xnu/series` | 4 |
-| `device` | `patches/xnu-27/series` — this repository | 5 |
+| `device` | `patches/xnu-27/series` — this repository | 7 |
 
 A schema_version 2 board never globs a directory: `board.toml` names each series file and the
 framework resolves it into its own checkout. `unixnu status --json` prints the resolved order. The
 counts above belong to the pinned sources and are a comment, not a constant.
 
-### The five device patches
+There is no `soc` layer. The reference board on this line reaches two SoC patches through
+`UniXNU-sm7675-common`; the SM6225 equivalent has no published repository (the URL returns 404).
+Rather than name a layer that cannot resolve, those two changes were read from the reference and
+carried here as device patches — `xun-pmgr-bringup` and `xun-clustered-mpidr`. Neither names an
+SM7675 register and both apply to `xnu-12377.121.6` unchanged, so a future SM6225 layer can take
+them back by adding the series line and dropping the two files.
+
+### The seven device patches
 
 `patches/xnu-27/series` lists them in application order and explains each one next to the file it
 names. In short:
@@ -97,6 +103,8 @@ names. In short:
 | `native-stack-shift` | A 4 KiB kernel on 32 KiB-aligned stacks. AMFI's `PAGE_SHIFT_CONST` reader bounds-checks against the stack and fails at fixed call depths without the shift being published. |
 | `offline-no-iortc-wait` | There is no IORTC device on SM6225 and the wait never matches; the resource-matching path faults inside `IOKitInitializeTime`. |
 | `darwin27-missing-syscalls` | The 24B156 userland calls syscalls **556** and **557**, which xnu-12377 does not declare. Found with `tools/ipados27/abi-census.py`; they fail with `ENOTSUP` instead of killing the caller with `SIGSYS`. |
+| `xun-pmgr-bringup` | `build-platform-power.py` links `sheng_pmgr_run()` into the kernel and nothing called it: the PMGR nub was present and unreachable, so the power and clock domains the userland asks for never appeared. The call is placed after `bsd_bufferinit()` under `XNU_SHENG_PMGR`. |
+| `xun-clustered-mpidr` | The four Cortex-A73 cores report MPIDR `0x100..0x103`. `start.s` turns MPIDR into a CPU number with a `0xFF` mask unless `HAS_CLUSTER`, which folds those four onto the A53 numbers, so no secondary start ever selects a distinct entry for them. |
 
 That last one is worth spelling out, because it is a real measurement rather than a guess.
 `tools/ipados27/abi-census.py` reads every `svc #0x80` in the shipped dyld shared cache — 81
@@ -184,10 +192,22 @@ kernel and ADT on `macos-latest` (it selects the newest Xcode on the image and n
 `-Wno-unnecessary-virtual-specifier`), and the root image on `ubuntu-latest`. `bisect.yml` is the
 patch-driver variant for narrowing a boot stall.
 
-The workflows are in the tree as a record of how the image is built, but **GitHub Actions is
-disabled on this repository**. Nothing here is built by pushing: the kernel and the payload are
-built locally (`scripts/build-macos-local.sh`) and flashed by hand. Re-enable the workflows in
-Settings → Actions only for a deliberate run, and note that a push then starts one.
+These run on push to `main` and on `workflow_dispatch`. A run is not a boot test: it produces
+`boot.img`, `payload.img` and the two ADTs, and the tablet still has to be flashed by hand.
+
+Three jobs, in order:
+
+| Job | Runner | What it does |
+| --- | --- | --- |
+| `build-uefi` | `ubuntu-latest` | Scaffolds `xunPkg` into Mu-Silicium, runs `scripts/check-xun.py`, builds `SILICIUM_UEFI.fd`. |
+| `build-xnu` | `macos-latest` | Generates both ADTs, fetches the touch firmware blobs, builds the kernel twice (the second pass links the real `ShengPlatformPower.cpp` against pass 1's `mach.macho`), stages the trust-cache bundle — the pinned digest is asserted, not printed — and builds `payload.img`. |
+| `package-bootimg` | `ubuntu-latest` | Assembles `boot.img` from the UEFI FD, `xun.dtb` and the payload, and fails if it exceeds 64 MiB. |
+
+The `build-xnu` job needs `UNIXNU_UNIQUE_CHIP_ID` as a repository secret, because the platform
+seed is deliberately not stored in this repository. Without it that job fails at the payload step.
+
+Local builds do not depend on any of this: `scripts/build-macos-local.sh` is the same pipeline
+driven from your own machine, and it is what the flashing guide uses.
 
 ## Flash
 
@@ -213,8 +233,9 @@ stock boot image — it is a property of the bootloader, not of the image. Write
 | OS profile, IPSW members, volume UUIDs, trust-cache digest | Read from the 24B156 image itself |
 | `/chosen/boot-manifest-hash` | **Set**, and the root image is built to match it — see below |
 | `/chosen/kernel-ctrr-to-be-enabled` | **Set to 0.** SM6225 has no CTRR, so kernel text is writable; without the property `ml_unsafe_kernel_text()` asserts and `dtrace_early_init()` panics. |
-| `[root] systemos_image_sha256` | **Still empty.** The SystemOS volume was expanded and read for its UUID, but the raw image digest has not been taken; it goes in once measured. |
-| `[kernel.prelink] kernelcache_sha256`, `early_security_init` | **Still empty.** Both are offsets inside a built kernelcache and only exist after the first kernel build of this profile. |
+| `[root] systemos_image_sha256` | **Measured.** 6,174,015,488 bytes expanded from `141-10410-235.dmg.aea`, digest `19b656d4…`. |
+| `[kernel.prelink] kernelcache_sha256` | **Measured.** The stock `kernelcache.release.ipad12p` (21,687,452 bytes), which is what the prelink is cut against. |
+| `[kernel.prelink] early_security_init` | **Still empty, deliberately.** It is an address inside *our* built kernelcache; the stock one cannot supply it and a copied value fails in AMFI on hardware. `scripts/inspect-prelink-callsite.py` reads it by symbol once a kernel exists. |
 | The `native-stack-shift` prelink binding | **Not yet made.** The patch defines `unixnu_kernel_stack_shift`; what makes it take effect is a prelink fixture entry binding AMFI's one `PAGE_SHIFT_CONST` GOT slot to it, and that fixture is cut from a built kernelcache — so it is an after-the-first-build step, like `kernelcache_sha256`. Defining the symbol alone changes nothing. |
 | `scripts/check-board-os.py` | Reports every empty value above as `pending` and fails only on an inconsistency. |
 | GPU | Deferred. SM6225 is an Adreno 610 (a6xx, no GMU); the ADT describes the block so it can be named truthfully, and no driver attaches to it. |
@@ -256,7 +277,7 @@ Copyright (c) 2026 UniXNU contributors.
 Original project:
 https://github.com/UniXNU/UniXNU
 
-The board layout, the OS line, the four-layer kernel patch series and the device-layer patches
+The board layout, the OS line, the kernel patch layering and the device-layer patches
 follow [UniXNU-muyu](https://github.com/yehua123-oos/UniXNU-muyu), which runs the same iPadOS 27 line on
 an SM8635 tablet; this repository keeps its shape and replaces the SoC, the storage controller and
 the panel.
