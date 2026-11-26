@@ -106,7 +106,30 @@ def main():
     parser.add_argument('--trust-cache', action='store_true', help='Zeroed TrustCache sidecar handoff placeholder')
     parser.add_argument('--gpu-addon', action='store_true',
                         help='Zeroed GpuAddon sidecar handoff placeholder')
+    # The single fatal input for the iPadOS 27 userland's first mount. launchd runs `mount -P 1`
+    # with env 0 (no user-device-tree fstab exists), and in that mode a missing Data volume or a
+    # missing /private/preboot bindfs source are only warnings - but a failed read of
+    # /chosen/boot-manifest-hash is exit 66, and launchd then fails the mount-phase-1 boot task.
+    # mount(8) derives the boot-set directory name from it: /private/preboot/<UPPERCASE HEX>.
+    parser.add_argument('--boot-manifest-hash',
+                        help='96 hex characters for /chosen/boot-manifest-hash; mount(8) names '
+                             '/private/preboot/<hash> from it and that directory must also exist in '
+                             'the flashed root image')
+    # Accepted so a board.toml `filesystems = false` can be forwarded verbatim. This generator never
+    # emits a /filesystems subtree - that is upstream's shape, and the shape the iPadOS 27 userland
+    # wants - so the flag is a statement of the default rather than a switch.
+    parser.add_argument('--no-filesystems', action='store_true',
+                        help='omit the /filesystems subtree (already the default here; accepted so the '
+                             'framework can forward board.toml `filesystems = false`)')
     args = parser.parse_args()
+    boot_manifest_hash = None
+    if args.boot_manifest_hash:
+        try:
+            boot_manifest_hash = bytes.fromhex(args.boot_manifest_hash)
+        except ValueError:
+            parser.error('--boot-manifest-hash must be hex')
+        if len(boot_manifest_hash) != 48:
+            parser.error('--boot-manifest-hash must be 48 bytes (96 hex characters)')
     if (args.unique_chip_id is None) != (args.chip_id is None):
         parser.error('--unique-chip-id and --chip-id must be supplied together')
     if args.unique_chip_id is not None and not (0 < args.unique_chip_id < 1 << 64 and 0 < args.chip_id < 1 << 32):
@@ -151,11 +174,19 @@ def main():
                         ('dram-base', struct.pack('<Q', args.dram_base)),
                         ('dram-size', struct.pack('<Q', args.dram_size)),
                         ('crypto-hash-method', b'sha2-384\0'),
+                        *([('boot-manifest-hash', boot_manifest_hash)] if boot_manifest_hash else []),
                         *([('root-matching', ('<dict><key>IOProviderClass</key><string>IOMedia</string>'
                                               '<key>IOPropertyMatch</key><dict><key>UUID</key><string>' +
                                               args.root_match_volume_uuid.upper() + '</string></dict></dict>\0').encode())]
                           if args.root_match_volume_uuid else []),
                         ('amfi-only-platform-code', struct.pack('<I', 1)),
+                        # ml_unsafe_kernel_text() asserts unless ml_unsafe_kernel_text_init() found this
+                        # property in /chosen (iBoot writes it on Apple hardware). SM6225 has no CTRR,
+                        # so kernel text is writable and 0 is the truthful value: the init sets
+                        # _unsafe_kernel_text = (0 == value) = true. Without it dtrace_early_init()
+                        # panics with
+                        #   machine_routines.c:3379 Assertion failed: _unsafe_kernel_text_initialized
+                        ('kernel-ctrr-to-be-enabled', struct.pack('<I', 0)),
                         *empty_nvram_proxy()],
              [node('memory-map', ([("PackedRAMDisk" if args.packed_data_ramdisk else "RAMDisk", bytes(16))] if (args.data_ramdisk or args.packed_data_ramdisk) else []) +
                                  ([('TrustCache', bytes(16))] if args.trust_cache else []) +
