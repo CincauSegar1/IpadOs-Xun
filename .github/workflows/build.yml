@@ -185,9 +185,11 @@ jobs:
           assert cap_old in cap_text, 'Expected BOOTSTRAP_TABLE_SIZE 16-page entry missing'
           cap.write_text(cap_text.replace(cap_old, cap_new, 1))
           PY
-          # board.toml [ipsw] url is the official CDN URL; a cache miss streams only the members
-          # asked for, over HTTP range requests, rather than the whole 9.9 GiB archive.
-          python3 unixnu ipsw fetch KernelCache OS -D ../IpadOS-Xun
+          # Only the kernelcache. The members come from board.toml [ipsw] fetch, and OS is
+          # deliberately not among them: it is 7.7 GB and nothing in the kernel or payload build
+          # reads it. `unixnu build kernel` would already fetch what it needs on its own; the
+          # explicit call is here so the cache is populated before the two-pass build starts.
+          python3 unixnu ipsw fetch KernelCache -D ../IpadOS-Xun
           cp ../IpadOS-Xun/package/xnu-patches/native-smp-type-clusters.patch patches/xnu/
           python3 unixnu defconfig xun_defconfig -D ../IpadOS-Xun
           python3 ../IpadOS-Xun/scripts/make-xun-data-seed.py --output out/xun-data.dbr --device ../IpadOS-Xun --unixnu . --config auto
