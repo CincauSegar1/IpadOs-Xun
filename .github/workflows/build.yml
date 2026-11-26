@@ -111,6 +111,10 @@ jobs:
       - name: Install Toolchain Tools
         run: |
           brew install llvm lld mtools dtc lzfse
+          # unixnu.ipsw.decrypt_aea() needs both: `ipsw fw aea --key` reads the content key out of the
+          # archive header, and macOS /usr/bin/aea decrypts with it. 24B156 ships the OS member as
+          # 141-09394-225.dmg.aea, so the Data seed cannot be built without them.
+          brew install blacktop/tap/ipsw
           if ! command -v unifdef >/dev/null; then
             brew install unifdef
             echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"

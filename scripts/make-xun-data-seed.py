@@ -41,33 +41,31 @@ def find_unixnu_root(explicit):
 
 
 def find_os_image(unixnu_root, device_root, explicit):
-    """The OS volume to read /private/var from: a decrypted .dmg, or an encrypted .dmg.aea.
+    """A mountable OS disk image to read /private/var from. Always a decrypted .dmg, never an .aea.
 
-    24B156 ships 141-09394-225.dmg.aea, AEA encrypted. unixnu.ipsw.Ipsw.disk_image() decrypts it
-    with macOS /usr/bin/aea, so an .aea is the normal case on this line, not the exception.
+    24B156 ships 141-09394-225.dmg.aea - AEA encrypted - so the file `ipsw fetch OS` leaves behind
+    cannot be handed to hdiutil. It has to be decrypted first, which unixnu.ipsw.decrypt_aea() does
+    with the key from the archive header and macOS /usr/bin/aea. Handing the .aea over unchanged is
+    what made hdiutil exit 1 with no useful message.
     """
     if explicit:
         p = Path(explicit).resolve()
         require(p.is_file(), f'OS image not found: {p}')
         return p
-    patterns = [
-        'out/ipsw/*/044-76040-038.dmg',
-        '.cache/ipsw/*/044-76040-038.dmg',
-        'out/ipsw/*/*.dmg',
-        'out/ipsw/*/*.dmg.aea',
-        '.cache/ipsw/*/*.dmg',
-        '.cache/ipsw/*/*.dmg.aea',
-    ]
-    # Read /private/var straight from the IPSW when it is on this machine: that is orders of
-    # magnitude smaller than the 7.7 GB OS member, and it is the same data the fetch would produce.
     if os.environ.get('UNIXNU_IPSW') or (device_root / 'board.toml').is_file():
         try:
-            staged = fetch_var_from_ipsw(unixnu_root, device_root)
-        except Exception as error:  # noqa: BLE001 - any failure here just means "fall back to the dmg"
+            staged = os_image_from_ipsw(unixnu_root, device_root)
+        except Exception as error:  # noqa: BLE001 - any failure here just means "fall back to the cache"
             print(f'make-xun-data-seed: IPSW seed path unavailable ({error})', file=sys.stderr)
         else:
             if staged is not None:
                 return staged
+    patterns = [
+        'out/ipsw/*/044-76040-038.dmg',
+        '.cache/ipsw/*/044-76040-038.dmg',
+        'out/ipsw/*/*.dmg',
+        '.cache/ipsw/*/*.dmg',
+    ]
     for base in (unixnu_root, device_root):
         for pat in patterns:
             hits = sorted(base.glob(pat))
@@ -77,12 +75,13 @@ def find_os_image(unixnu_root, device_root, explicit):
     require(False, 'Fetched iPadOS OS .dmg not found (run unixnu ipsw fetch OS first)')
 
 
-def fetch_var_from_ipsw(unixnu_root, device_root):
-    """Read /private/var out of the mounted-able OS .dmg.aea inside the IPSW, or return None.
+def os_image_from_ipsw(unixnu_root, device_root):
+    """The decrypted OS .dmg for the board's IPSW, or None when the IPSW is remote and unfetched.
 
-    `unixnu ipsw fetch OS` extracts a 7,715,519,360-byte member to disk before anything can read it.
-    The same data is already inside the archive, so when the IPSW is local this decrypts it in place
-    into the unixnu cache and hands back the .dmg that Ipsw.disk_image() writes.
+    Ipsw.disk_image() is the one place that knows this: it reads the member from the archive when the
+    archive is local, or reuses the copy `ipsw fetch OS` already extracted when it is not, and then
+    runs the AEA decrypt in both cases. Doing that here rather than reimplementing the glob keeps
+    the two paths identical instead of drifting apart.
     """
     sys.path.insert(0, str(unixnu_root / 'scripts'))
     from unixnu import ipsw as ipsw_mod
@@ -91,11 +90,19 @@ def fetch_var_from_ipsw(unixnu_root, device_root):
 
     ctx = Context(parser().parse_args(['ipsw', 'info', '-D', str(device_root)]))
     source = ipsw_mod.Ipsw(ctx)
-    if source.remote:
-        print('make-xun-data-seed: IPSW is remote; the OS member has to be fetched first', file=sys.stderr)
-        return None
     name, size, _ = source.info('OS')
-    print(f'make-xun-data-seed: OS member {name} ({size >> 20} MiB) in the local IPSW')
+
+    # disk_image() validates the decrypted result against [root] os_image_sha256 when [userdata] has
+    # a window naming this component. That pin is the digest of the raw APFS image, and the .dmg
+    # 141-09394-225.dmg.aea expands to is exactly that image, so the two must agree - a mismatch
+    # means the board was filled from a different IPSW, not that the decrypt failed. Report it as
+    # that instead of letting it surface as a bare "raw root image differs".
+    window = next((w for w in ctx.board.get('userdata', {}).get('windows', [])
+                   if w.get('component') == 'OS'), None)
+    pin = ctx.board.get('root', {}).get((window or {}).get('name', 'os').lower() + '_image_sha256')
+    print(f'make-xun-data-seed: OS member {name} ({size >> 20} MiB), {"remote" if source.remote else "local"} IPSW'
+          + (f', pinned {pin[:16]}...' if pin else ', no [root] pin'))
+
     target = source.disk_image('OS')
     return target if target.is_file() else None
 
