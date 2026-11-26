@@ -197,8 +197,8 @@ jobs:
           sha = hashlib.sha256(bundle).hexdigest()
           # The digest of the 24B156 bundle is not pinned yet; the build prints it so it can be
           # written into board.toml [payload] trust_cache_sha256 once it is the one that boots.
-          expected = None
-          assert expected is None or sha == expected, f'Trust cache bundle hash mismatch: {sha} != {expected}'
+          expected = '8f4b06b0a4907e84be6fce1c66012bc5b027d59885a70cac2775ffa047322193'
+          assert sha == expected, f'Trust cache bundle hash mismatch: {sha} != {expected}'
           Path('out/original-static-system.bundle').write_bytes(bundle)
           print(f'Staged trust cache bundle ({len(bundle)} bytes, sha256 {sha})')
           PY

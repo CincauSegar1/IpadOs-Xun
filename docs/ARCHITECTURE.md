@@ -73,7 +73,7 @@ The panel does not have that problem: if it is on the screen, the code got there
 | --- | --- |
 | OS profile (`ipados-27.2.1-24B156`) | **Read from the image.** The volume UUIDs came out of the APFS superblocks and `os_image_sha256` from the expanded image; the OS volume is `RaveB24B156.J181J182OS`. What is still unread is `systemos_image_sha256` and the two `[kernel.prelink]` values, which need a built kernelcache. `scripts/check-board-os.py` names them. |
 | `/chosen/boot-manifest-hash` and the root image | **Kept in step.** The hash is `board.toml [payload.adt] boot_manifest_hash`, forwarded to the ADT and baked into the image as `/private/preboot/<HASH>/usr/standalone/firmware` by `tools/ipados27/build-simg.sh`. Change one and you must rebuild the other; see the README. |
-| SM6225 SoC layer | **Does not exist yet.** `feeds.toml` names the repository and leaves the commit empty, because pinning a commit that is not there is a claim the file cannot back — the URL returned 404 when checked. |
+| SM6225 SoC layer | **Not published**, so there is no `soc:` line. The two changes such a layer would carry (`sheng_pmgr_run()` being called, and the `0xFFFF` MPIDR mask) are device patches here instead; neither is SM7675-specific. |
 | Board drivers (`drivers/`, `package/`) | **Present.** `drivers/XunEmmc` is NativeEmmc (Qualcomm SDHCI MSM for eMMC 5.1); `package/` carries display, touch, boot log, boot progress and identity. What no driver does yet is attach to the GPU. |
 | GPU | Deferred. `[gpu]` describes the Adreno 610 block so the ADT can name it truthfully; no driver attaches. |
 

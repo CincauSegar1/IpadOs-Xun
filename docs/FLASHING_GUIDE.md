@@ -94,9 +94,10 @@ Because compiling XNU requires Apple's `iphoneos` SDK (available on macOS) and c
    ```
 4. Output boot artifacts will be assembled into `out/xun/boot.img`.
 
-> **GitHub Actions is disabled on this repository.** The workflows in `.github/workflows/` are kept
-> as a record of how the image is built, but pushing does not start a runner. Build locally, or
-> re-enable Actions in Settings deliberately.
+> **GitHub Actions builds this on push**, but a run only produces artifacts — nothing is flashed
+> for you and no run proves the tablet boots. Download `xun-bootimg` (and `xun-kernel-payload` for
+> `payload.img`) from the run, then follow section 6 onwards. `UNIXNU_UNIQUE_CHIP_ID` must be set as
+> a repository secret or the `build-xnu` job stops at the payload step.
 
 ---
 
