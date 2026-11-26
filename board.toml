@@ -237,6 +237,22 @@ trust_cache_sha256 = [
 # through the userdata store window (a seed above 2 GiB has no volatile backing).
 kernel_args = [
   "-v",
+  # Map the shared cache unslid, so a raw (un-rebased) chained pointer still names a valid
+  # address. The 24B156 userland is built against a cached dyld the kernel does not slide the way
+  # Apple's does.
+  "-disable_aslr",
+  # There is no wired UART, so kprintf falls back to the framebuffer video console, and a graphics
+  # boot keeps it blank. This argument is what switches vcattach() to kPETextScreen - and it is
+  # also the gate xun-console-clear.patch reads, so without it that patch does nothing and the panel
+  # stays empty while the kernel is running fine.
+  "-bravearktextconsole",
+  # A contiguous PTE hint is refused when the bootstrap already mapped the page without it: the
+  # assert at arm_vm_init.c:1107 will not change the hint bit on an active mapping. The 27 fileset
+  # emission makes _end reach into those pages, so the hint is off for bring-up.
+  "use_contiguous_hint=0",
+  # APFS mount of the OS volume alongside the Data volume rather than a private one; the iPadOS 27
+  # userland expects the shared Data volume layout.
+  "-apfs_shared_datavolume",
   "serial=3",
   "-progress",
   "debug=0x14e",
@@ -275,13 +291,25 @@ kernel_args = [
   "offline-legacy-cpu-present=1",
   "offline-key-events=1",
   "sheng-aks=1",
+  # sls 0 = MobileKeyBag "unlocked". Without sheng-aks-sls the keybag state is whatever
+  # AppleKeyStore defaults to, and PreBoard asks for a passcode that cannot be entered - the
+  # measured alternatives are sls 3, which removes PreBoard but then stalls the progress bar at
+  # the very end, and this one, which lets the state migration's tail finish.
+  "sheng-aks-sls=0",
   "offline-hid-input=1",
   "offline-hid-home=1",
   "touch-hid=1",
   "buttons=1",
   "touch=5",
   "sheng-disable-watchdogd=1",
-  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,com.apple.PerfPowerServices,com.apple.iomfb_fdr_loader,com.apple.iconservicesagent",
+  # -1 disables the Apple ARM watchdog timer kext, which is the genuine Apple boot argument and
+  # one of the two reset sources on this line; the other is watchdogd, covered by
+  # CONFIG_XNU_WATCHDOG_POLICY and sheng-disable-watchdogd above.
+  "wdt=-1",
+  # Jobs that need hardware this tablet does not expose to the kernel. Kept short on purpose:
+  # the kernel command line has a 1000-byte limit and this is the one entry without a fixed size.
+  # identityservicesd and bluetoothd are the two that otherwise start and fail in a loop.
+  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.bluetoothd",
 ]
 
 [payload.adt]
