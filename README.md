@@ -208,6 +208,7 @@ stock boot image — it is a property of the bootloader, not of the image. Write
 | `/chosen/kernel-ctrr-to-be-enabled` | **Set to 0.** SM6225 has no CTRR, so kernel text is writable; without the property `ml_unsafe_kernel_text()` asserts and `dtrace_early_init()` panics. |
 | `[root] systemos_image_sha256` | **Still empty.** The SystemOS volume was expanded and read for its UUID, but the raw image digest has not been taken; it goes in once measured. |
 | `[kernel.prelink] kernelcache_sha256`, `early_security_init` | **Still empty.** Both are offsets inside a built kernelcache and only exist after the first kernel build of this profile. |
+| The `native-stack-shift` prelink binding | **Not yet made.** The patch defines `unixnu_kernel_stack_shift`; what makes it take effect is a prelink fixture entry binding AMFI's one `PAGE_SHIFT_CONST` GOT slot to it, and that fixture is cut from a built kernelcache — so it is an after-the-first-build step, like `kernelcache_sha256`. Defining the symbol alone changes nothing. |
 | `scripts/check-board-os.py` | Reports every empty value above as `pending` and fails only on an inconsistency. |
 | GPU | Deferred. SM6225 is an Adreno 610 (a6xx, no GMU); the ADT describes the block so it can be named truthfully, and no driver attaches to it. |
 

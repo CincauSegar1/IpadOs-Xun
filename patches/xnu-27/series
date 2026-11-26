@@ -19,7 +19,13 @@
 #                            personality but not the class, and nothing publishes the volumes.
 #   native-stack-shift       A 4 KiB kernel on 32 KiB-aligned stacks. AMFI's PAGE_SHIFT_CONST
 #                            reader bounds-checks against the stack and fails at fixed call
-#                            depths without this.
+#                            depths without this. NOTE: the patch only *defines* the symbol. The
+#                            binding that makes it take effect is a prelink fixture entry for the
+#                            one GOT slot AMFI reads PAGE_SHIFT_CONST from, and that fixture is
+#                            generated from a built kernelcache - so it is a build-time step after
+#                            the first kernel build, alongside [kernel.prelink] kernelcache_sha256.
+#                            Defining the symbol without the binding changes nothing; it is here
+#                            because the binding resolves it by name.
 #   offline-no-iortc-wait    There is no IORTC device on SM6225 and the wait never matches.
 #                            Measured on muyu as a data abort inside IOKitInitializeTime; the
 #                            reasoning is the same here - a wait for a service that cannot exist
