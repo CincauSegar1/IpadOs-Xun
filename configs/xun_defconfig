@@ -43,6 +43,11 @@ CONFIG_XNU_NATIVE_ARCH_TIMER=y
 # SM6225 Kryo 265 cores (Cortex-A73 Gold, Cortex-A53 Silver) are ARMv8.0 and lack PAN.
 CONFIG_XNU_NATIVE_PAN=n
 CONFIG_XNU_SHENG_PMGR=y
+# The four Cortex-A73 cores report MPIDR 0x100..0x103, i.e. above 0xFF, so osfmk/arm64/start.s
+# must mask 0xFFFF rather than 0xFF when it turns MPIDR into a CPU number. Without this the
+# patch's #if names an undefined macro, so the switch has to exist even though it is only ever
+# consumed by that one expression.
+CONFIG_XNU_QCOM_CLUSTERED_MPIDR=y
 
 # On-screen bring-up progress bars + fault/process telemetry
 CONFIG_XNU_BOOT_PROGRESS=y

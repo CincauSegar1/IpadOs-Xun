@@ -9,7 +9,14 @@
 # The arch, soc and os layers are NOT copied in. board.toml references them by prefix and the
 # framework resolves each into its own checkout, exactly as UniXNU-uke does.
 #
-# Five patches, and what each one is for on THIS board:
+# The soc: layer this board names in feeds.toml does not exist yet (the URL returns 404). The
+# two patches that layer would have carried were read from the reference SoC layer and both are
+# generic rather than SM7675-specific, so they live here instead: xun-pmgr-bringup is the
+# sheng-platform-power half, xun-clustered-mpidr is the native-smp-secondary half. When an
+# SM6225 layer is published, board.toml can move soc: back into patch_series and these two can
+# be dropped - they apply the same change.
+#
+# Seven patches, and what each one is for on THIS board:
 #
 #   xun-console-clear        No UART in the XNU closure for SM6225, so the panel is the only
 #                            output there is. DarwinBoot leaves its handoff text on it in a
@@ -35,9 +42,18 @@
 #                            xnu-12377 does not declare; `nosys` would kill the caller with
 #                            SIGSYS. Found with tools/ipados27/abi-census.py over the shipped
 #                            dyld shared cache. The patch body explains how.
+#   xun-pmgr-bringup         build-platform-power.py links sheng_pmgr_run() into the kernel and
+#                            nothing called it, so the PMGR nub was present and unreachable: the
+#                            power/clock domains the userland asks for never appeared. Under
+#                            XNU_SHENG_PMGR the call is placed after bsd_bufferinit().
+#   xun-clustered-mpidr      The four Cortex-A73 cores report MPIDR 0x100..0x103. start.s turns
+#                            MPIDR into a CPU number with a 0xFF mask unless HAS_CLUSTER, which
+#                            would fold those four onto the A53 numbers. Uses the 0xFFFF mask.
 
 xun-console-clear.patch
 xun-source-storage-start.patch
 native-stack-shift.patch
 offline-no-iortc-wait.patch
 darwin27-missing-syscalls.patch
+xun-pmgr-bringup.patch
+xun-clustered-mpidr.patch

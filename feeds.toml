@@ -1,26 +1,16 @@
 # Sources this board adds to the framework's base feeds.
 #
-# The SoC layer is a pinned shared repository, not a vendored copy: [board]
-# soc_source = "sm6225" selects it by name, and every patch this board's series names
-# under soc: comes from that checkout. Re-pin the commit and unixnu.lock together.
+# There is no soc kind here. UniXNU-muyu pins UniXNU-sm7675-common for its SoC and reaches its
+# two SoC patches through a soc: series line; the SM6225 equivalent does not exist -
+# github.com/UniXNU/UniXNU-sm6225-common returns 404, checked 2026-11-26 and again 2026-11-27.
+# A source with an empty commit and a series line pointing into a checkout that never arrives is
+# a build that fails late, in patch application, with a message about a missing file rather than
+# about a missing repository.
 #
-# NOTE: the SM6225 layer is the one piece of this repository that does not exist yet.
-# UniXNU-muyu pins UniXNU-sm7675-common for its SoC; xun needs the equivalent for
-# SM6225 (bengal/khaje), and until it is published the two soc: patches
-# (sheng-platform-power, native-smp-secondary) have nowhere to come from.
-# scripts/check-board-os.py reports this as the first missing input rather than
-# letting a build fail later with an unresolved patch path.
-
-[[source]]
-name = "sm6225"
-kind = "soc"
-git = "https://github.com/UniXNU/UniXNU-sm6225-common"
-ref = "main"
-# Empty on purpose: pinning a commit that does not exist would be a claim the file
-# cannot back. Fill this in together with the ref once the repository is public.
-# Verified 2026-11-26: github.com/UniXNU/UniXNU-sm6225-common returns 404, so this is not
-# a placeholder for a private repo - there is no SM6225 layer published yet.
-commit = ""
+# So the board carries the two changes itself, as ordinary device patches:
+# xun-pmgr-bringup and xun-clustered-mpidr. Both were read from the reference SoC layer and
+# neither is SM7675-specific. If an SM6225 layer is published, add it back here as
+# name = "sm6225", kind = "soc", and move the series line back - see board.toml patch_series.
 
 [[source]]
 name = "IOStorageFamily"

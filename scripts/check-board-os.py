@@ -37,7 +37,20 @@ def toml_value(text, section, key):
     if not body:
         return None
     m = re.search(r'^%s\s*=\s*(.+?)\s*$' % re.escape(key), body.group(1), re.M)
-    return m.group(1).strip() if m else None
+    if not m:
+        return None
+    value = m.group(1).strip()
+    # A multi-line array: keep collecting until the brackets balance. Single-line keys never
+    # enter this branch, so nothing else changes.
+    if value.startswith('[') and value.count('[') > value.count(']'):
+        rest = body.group(1)[m.end():]
+        depth = value.count('[') - value.count(']')
+        for line in rest.splitlines():
+            value += ' ' + line.strip()
+            depth += line.count('[') - line.count(']')
+            if depth <= 0:
+                break
+    return value
 
 
 def unquote(value):
@@ -108,7 +121,8 @@ def main():
     prelink_esi = toml_value(board, 'kernel.prelink', 'early_security_init')
     if prelink_esi is None or unquote(prelink_esi) == '':
         pending.append('[kernel.prelink] early_security_init is empty: the KEXT address inside '
-                       'the 24B156 KernelCache, which only the built kernelcache can supply')
+                       'the kernelcache this build emits (not the stock 24B156 one), which only '
+                       'a built kernel can supply')
     adt_uuid = toml_value(board, 'payload.adt', 'root_match_volume_uuid')
     if adt_uuid is None or unquote(adt_uuid) == '':
         pending.append('[payload.adt] root_match_volume_uuid is empty: same value as [root] '
@@ -157,6 +171,49 @@ def main():
         blocking.append(f'patches/xnu-27/ has patches the series does not list: {unlisted}')
     if not missing and not unlisted:
         ok.append(f'device patch series: {len(listed)} patches, listing and directory agree')
+
+    # A series line whose layer has no source is a build that fails late, in patch application,
+    # with a message about a missing file. The soc: layer is the one that had this problem.
+    layers = []
+    ps = toml_value(board, 'kernel', 'patch_series')
+    if ps:
+        layers = [l.strip().strip('"').strip("'") for l in
+                  ps.strip('[]').split(',') if l.strip()]
+    soc_line = [l for l in layers if l.startswith('soc:')]
+    if soc_line:
+        feeds = (ROOT / 'feeds.toml').read_text()
+        # Walk the [[source]] blocks and find the one whose kind is "soc".
+        soc_src, in_soc, cur = None, False, {}
+        for raw in feeds.splitlines():
+            line = raw.strip()
+            if line == '[[source]]':
+                if in_soc:
+                    soc_src = cur
+                in_soc, cur = False, {}
+                continue
+            if '=' not in line or line.startswith('#'):
+                continue
+            k, v = line.split('=', 1)
+            k, v = k.strip(), v.strip().strip('"')
+            if k == 'kind':
+                in_soc = v == 'soc'
+            if in_soc:
+                cur[k] = v
+        if in_soc:
+            soc_src = cur
+        soc_src = soc_src or {}
+        has_soc_source = bool(soc_src)
+        has_commit = bool(soc_src.get('commit', ''))
+        if not has_soc_source:
+            blocking.append(f'board.toml patch_series names {soc_line} but feeds.toml has no '
+                            'kind = "soc" source to resolve it into')
+        elif not has_commit:
+            blocking.append(f'board.toml patch_series names {soc_line} but the soc source in '
+                            'feeds.toml has an empty commit, so the layer cannot be fetched')
+        else:
+            ok.append('soc layer referenced and pinned in feeds.toml')
+    else:
+        ok.append('no soc: layer named; the SoC changes are device patches')
 
     for line in ok:
         print(f'  ok      {line}')

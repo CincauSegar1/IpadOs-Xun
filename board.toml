@@ -79,24 +79,31 @@ windows = [
 os_volume_uuid = "043A9710-08A4-44CC-BA81-29F41495EE9F"
 systemos_volume_uuid = "D2707B48-9FF0-479D-926A-64F77F442844"
 os_image_sha256 = "611bb8da365f736acae6e6e19a510f276dc008752fff87b30423648e0d6a9c93"
-# Not yet measured: the SystemOS image was expanded and read for its volume UUID, but its raw
-# digest has not been taken. It goes in only once it has.
-systemos_image_sha256 = ""
+# 6174015488 bytes expanded from 141-10410-235.dmg.aea. This is the image the sealed
+# RaveB24B156.J181J182SystemCryptex volume was read out of.
+systemos_image_sha256 = "19b656d4fc0699ce2f84e729d92f3a5b28437c6befbcc152b58e793395a0f69d"
 
 [kernel]
 defconfig = "xun_defconfig"
-# The four-layer patch series. A schema_version 2 board never globs a directory: each line is a
+# The three-layer patch series. A schema_version 2 board never globs a directory: each line is a
 # layer reference resolved into its own checkout, the way UniXNU-uke and UniXNU-muyu do it, and
 # the order below is the application order. The counts belong to the pinned sources and are a
 # comment, not a constant - re-check them with `unixnu status --json` when a layer is re-pinned.
 #
 #   arch     64 patches  UniXNU/profiles/arch/arm64e/patches/xnu/series
-#   soc       2 patches  the SM6225 SoC layer (feeds.toml)
 #   os        4 patches  profiles/os/ipados-27.2.1-24B156/patches/xnu/series
-#   device    5 patches  patches/xnu-27/series                          (this repository)
+#   device    7 patches  patches/xnu-27/series                          (this repository)
+#
+# There is no soc: line. muYu's fourth layer is UniXNU-sm7675-common, and the SM6225 equivalent
+# named in feeds.toml has no published repository (the URL returns 404). Rather than leave a
+# series line that cannot resolve, the two changes that layer carries were read from the
+# reference and moved into the device layer, where they are two ordinary patches:
+# xun-pmgr-bringup and xun-clustered-mpidr. Both are generic - neither names an SM7675 register -
+# and both apply to xnu-12377.121.6 unchanged. When an SM6225 layer exists, putting
+# "soc:patches/xnu-12377/series" back at line 2 and dropping those two from the device series
+# reproduces this kernel.
 patch_series = [
   "arch:patches/xnu/series",
-  "soc:patches/xnu-12377/series",
   "os:patches/xnu/series",
   "device:patches/xnu-27/series",
 ]
@@ -126,10 +133,18 @@ archives = [
 [kernel.prelink]
 tool = "kits/XnuPrelink/emit_prelink.py"
 kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
-kernelcache_sha256 = ""
+kernelcache_sha256 = "e9f46648e9a4840de016e6dd90e3ea3f9980811fb6e51efd97812572456a9633"
 slide = "-0x1000000"
 # Was com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0 on 21H461. The address is an
-# offset inside a specific KernelCache and does not survive a build change.
+# offset inside the kernelcache this prelink is emitted against, and it moves with every build of
+# that kernelcache - so it cannot be copied from 21H461, from the reference board, or from the
+# stock 24B156 kernelcache in the IPSW. It is read from OUR built
+# build/xnu/ios-obj/.../mach.development.*.unstripped.noctf once that exists, by symbol:
+#
+#   scripts/inspect-prelink-callsite.py --symbol early_security_init <our-kernel>
+#
+# Left empty deliberately. A wrong value here does not fail the build; it fails on hardware, in
+# AMFI, after the panel is already up - the least debuggable place a mistake can land.
 early_security_init = ""
 roots = [
   "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
