@@ -49,14 +49,16 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 KernelCache = "kernelcache.release.ipad12p"
 DeviceTree = "Firmware/all_flash/DeviceTree.j181ap.im4p"
 StaticTrustCache = "Firmware/141-09394-225.dmg.aea.trustcache"
-Cryptex1,SystemTrustCache = "Firmware/141-10410-235.dmg.aea.trustcache"
+"Cryptex1,SystemTrustCache" = "Firmware/141-10410-235.dmg.aea.trustcache"
 
-# Android's userdata (sda18 on the UFS LUN 0, 104.5 GiB), from the tablet's GPT, which agrees with sysfs. "unixnu build
-# userdata" writes the image for it; flashing it erases Android's data. The windows are those of UniXNU-sheng: the same
-# target image.
+# Android's userdata on this tablet: 114763587072 bytes (106.88 GiB) at 512-byte sectors, which is
+# 224147631 sectors. It was 0x1332730..0xe8fffff in the sheng line this board started from, a span
+# 20988416 bytes larger than the partition xun actually has; a userdata image built for the old span
+# does not fit and fastboot rejects the write. first_lba/last_lba below are derived from the measured
+# size, and `unixnu build userdata` writes the image for them. Flashing it erases Android's data.
 [userdata]
 first_lba = 0x1332730
-last_lba = 0xe8fffff
+last_lba = 0xe8f5fde
 lba_bytes = 512
 windows = [
   { name = "OS", component = "OS" },
@@ -284,15 +286,34 @@ kernel_args = [
 
 [payload.adt]
 tool = "scripts/make-xun-adt.py"
-# 0x8030 = 32816: the ApChipID of iPad12,1 in the 24B156 BuildManifest (A13 / H12). The 17.7.11
-# line used 0xCF (207), the iPad7,1's chip; the ADT this tag feeds describes the device, so it
-# has to follow the restore image.
-chip_id = "32816"
+# /chosen/chip-id, which seeds the platform UUID alongside unique-chip-id. It is NOT the
+# BuildManifest ApChipID: make-xun-adt.py parses this as hex and just needs a nonzero 4-byte seed,
+# and every board that boots the iPadOS 27 line - muyu included - keeps 207 (0x207) here.
+# An earlier revision of this file set it to "32816" thinking it was the A13 ApChipID (0x8030);
+# that is both the wrong concept and the wrong number, since the parser reads it as 0x32816.
+chip_id = "207"
 # 4 GiB, the iPad7,1's memory size (sheng, the board that runs iPadOS, owns 0x130000000). The firmware maps the free 0x80000000..0x1c0000000 run as one region. The first
 # boots used 2 GiB: iPadOS reached SpringBoard with 97 processes, but free memory fell to about 5 MiB.
 # Bump from 2 GiB (which left ~4 MiB free at 130 procs) to ~2.94 GiB inside MemoryMapLib's verified RAM Pool 2 (0x80000000..0x140000000, leaving 64 MiB headroom for 2 MiB alignment and EDK2 allocations).
 owned_memory_size = "0x1B8000000"
 root_match_volume_uuid = "043A9710-08A4-44CC-BA81-29F41495EE9F"   # the OS volume of the 24B156 image, see [root]
+# /chosen/boot-manifest-hash: the only *fatal* input to the iPadOS 27 userland's first mount.
+# launchd runs `mount -P 1` with env 0 because no user-device-tree fstab exists, and in that mode a
+# missing Data volume and a missing /private/preboot bindfs source are warnings - but a failed read
+# of this property is exit 66, and launchd then fails the mount-phase-1 boot task.
+#
+# mount(8) turns it into a directory name: /private/preboot/<UPPERCASE HEX>, which it then
+# bind-mounts over /usr/standalone/firmware. So this value and the root image have to agree, and the
+# root volume is mounted read-only at runtime - the directory has to be baked in.
+#
+# The value is this port's own bring-up boot-set identity, SHA-384 of "XunBringup.BootSet.v1\0".
+# It is not an Apple personalization manifest and there is nothing to derive it from; it just has
+# to be the same string in the ADT, in this file, and in the root image.
+boot_manifest_hash = "033991f9751b0c3e5225fe66c3d7b773c4228fcccbe3805209b74ca187b1b37bf7f870cc96cd106ae9415ef0e7f30b2f"
+# Ship no /filesystems node, which is upstream's shape. A /filesystems node raises mount(8)'s env
+# to 1, and env 1 makes the missing Data volume and the missing bindfs source fatal instead of
+# warnings. The original OS never has that node.
+filesystems = false
 # All eight cores (boot CPU 0 first): 0..3 Cortex-A53 (Kryo Silver), 0x100..0x103 Cortex-A73. ArmCpu starts the
 # others with PSCI CPU_ON under sheng-smp=1; "0" keeps the boot CPU only.
 # Bisecting a stall with all eight (2026-10-22: every core reached step 7, but user space stopped at launchd): first one
