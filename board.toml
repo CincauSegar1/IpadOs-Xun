@@ -1,0 +1,313 @@
+# Board description of the Lenovo Xiaoxin Pad 2022 (TB128FU, SM6225 bengal), read by the unixnu build driver.
+#
+# Prepared with the tablet under Android (TrebleDroid GSI, android-devinfo 2026-10-21). Nothing has been observed through
+# UniXNU on a TB128FU yet. The memory banks, [userdata] and every SoC address were read from the running device tree.
+
+[board]
+name = "xun"
+soc = "SM6225"
+# iPadOS 27.2.1 (24B156) on the iPad (9th generation) restore image, iPad12,1 / J181AP.
+# The earlier line of this board was iPadOS 17.7.11 (21H461) on the iPad7,1 image, inherited
+# from UniXNU-sheng; it is replaced here, not kept beside this one. profiles/os/... in the
+# UniXNU framework checkout is what turns the name below into an IPSW and a patch series.
+os_profile = "ipados-27.2.1-24B156"
+description = "Xiaomi Redmi Pad SE 11\" (xun)"
+kit = "xun"
+
+[components]
+include = ["ArmDTPlatform", "ArmCpu", "GopFramebuffer", "SoftwareAES", "AppleKeyStoreState", "XnuPrelink", "DarwinBoot"]
+
+# The target OS is the iPad (9th generation) restore image, iPadOS 27.2.1 (24B156). Every value
+# below was read out of that image's own BuildManifest.plist (identity 0: ApBoardID 0x18,
+# DeviceClass j181ap, Customer Erase Install) with scripts/inspect-ipsw.py, not transcribed from
+# another device's board file:
+#
+#   Product      iPad12,1 (the image also covers iPad12,2 / j182ap)
+#   Device class j181ap
+#   ApChipID     0x8030  -> A13 / H12 / t8030; KernelCache is kernelcache.release.ipad12p
+#   ApBoardID    0x18
+#   OS          141-09394-225.dmg.aea            (+ .aea.trustcache)
+#   SystemOS    141-10410-235.dmg.aea            (+ .aea.trustcache)
+#
+# Both disk images are Apple Encrypted Archives (magic AEA1). Their content key comes from the
+# archive's com.apple.wkms.fcs-key-url, which tools/renegade-rs fetches itself - no macOS, no
+# hdiutil, no loop device. That is why the root digests and volume UUIDs in [root] below are
+# filled from the expanded volume rather than from the archive header.
+[ipsw]
+url = "iPad_10.2_2021_27.2.1_24B156_Restore.ipsw"
+product = "iPad12,1"
+version = "27.2.1"
+build = "24B156"
+device_class = "j181ap"
+chip_id = 0x8030
+board_id = 0x18
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]
+
+# What the restore image calls each fetched member. These names are per-product and are not
+# derivable from the component name (ipad12p, not ipad17x), so they are written down.
+[ipsw.member]
+KernelCache = "kernelcache.release.ipad12p"
+DeviceTree = "Firmware/all_flash/DeviceTree.j181ap.im4p"
+StaticTrustCache = "Firmware/141-09394-225.dmg.aea.trustcache"
+Cryptex1,SystemTrustCache = "Firmware/141-10410-235.dmg.aea.trustcache"
+
+# Android's userdata (sda18 on the UFS LUN 0, 104.5 GiB), from the tablet's GPT, which agrees with sysfs. "unixnu build
+# userdata" writes the image for it; flashing it erases Android's data. The windows are those of UniXNU-sheng: the same
+# target image.
+[userdata]
+first_lba = 0x1332730
+last_lba = 0xe8fffff
+lba_bytes = 512
+windows = [
+  { name = "OS", component = "OS" },
+  { name = "SystemOS", component = "Cryptex1,SystemOS" },
+]
+
+[root]
+# Read off the APFS volumes of the restore image with `renegade-rs apfs <ipsw> os|sysos`, which
+# prints the volume name and UUID out of the volume superblock. These are the identities the
+# owner policy pins, and they are specific to 24B156 for J181/J182 - the volume names say so:
+#
+#   OS                "RaveB24B156.J181J182OS"          role 0x1
+#   Cryptex1,SystemOS "RaveB24B156.J181J182SystemCryptex" (sealed)
+#
+# image_sha256 is the digest of the raw expanded image the policy was built from, not of the
+# .aea container: the container changes with its wrapper, the image is what the block table
+# covers.
+os_volume_uuid = "043A9710-08A4-44CC-BA81-29F41495EE9F"
+systemos_volume_uuid = "D2707B48-9FF0-479D-926A-64F77F442844"
+os_image_sha256 = "611bb8da365f736acae6e6e19a510f276dc008752fff87b30423648e0d6a9c93"
+# Not yet measured: the SystemOS image was expanded and read for its volume UUID, but its raw
+# digest has not been taken. It goes in only once it has.
+systemos_image_sha256 = ""
+
+[kernel]
+defconfig = "xun_defconfig"
+# The four-layer patch series. A schema_version 2 board never globs a directory: each line is a
+# layer reference resolved into its own checkout, the way UniXNU-uke and UniXNU-muyu do it, and
+# the order below is the application order. The counts belong to the pinned sources and are a
+# comment, not a constant - re-check them with `unixnu status --json` when a layer is re-pinned.
+#
+#   arch     64 patches  UniXNU/profiles/arch/arm64e/patches/xnu/series
+#   soc       2 patches  the SM6225 SoC layer (feeds.toml)
+#   os        4 patches  profiles/os/ipados-27.2.1-24B156/patches/xnu/series
+#   device    5 patches  patches/xnu-27/series                          (this repository)
+patch_series = [
+  "arch:patches/xnu/series",
+  "soc:patches/xnu-12377/series",
+  "os:patches/xnu/series",
+  "device:patches/xnu-27/series",
+]
+# Archive builders of the kernel step, in order; the ones xun_defconfig links. build-arm-driver.py is UniXNU's generic
+# driver builder, which finds each component in UniXNU's components.toml.
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-arm-driver.py ArmDTPlatform",
+  "build-xun-armcpu.py",
+  "build-arm-driver.py SoftwareAES",
+  # NativeEmmc: Qualcomm SDHCI MSM (sdhci@4744000) for eMMC 5.1
+  "build-xun-emmc.py",
+  "build-xun-ramblock.py",
+  "build-software-aes-bindings.py",
+  "build-libpthread-kernel.py",
+  "build-link-stubs.py",
+  "build-boot-progress.py",
+  "build-platform-power.py",
+  "build-gop-legacy-display.py",
+]
+
+# Nothing in this block is transferable from the 17.7.11 line: it is keyed to the 24B156
+# KernelCache. Both values are empty until the first kernel build of this profile has run and its
+# kernelcache.release.ipad12p has been read. scripts/check-xun.py reports them as blocking rather
+# than letting a build proceed on a stale offset.
+[kernel.prelink]
+tool = "kits/XnuPrelink/emit_prelink.py"
+kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+kernelcache_sha256 = ""
+slide = "-0x1000000"
+# Was com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0 on 21H461. The address is an
+# offset inside a specific KernelCache and does not survive a build change.
+early_security_init = ""
+roots = [
+  "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
+  "com.apple.driver.AppleARMPlatform",
+  "com.apple.driver.AppleARMWatchdogTimer",
+  "com.apple.driver.AppleAudioClockLibs",
+  "com.apple.driver.AppleEffaceableStorage",
+  "com.apple.driver.AppleIISController",
+  "com.apple.driver.AppleM2ScalerCSCDriver",
+  "com.apple.driver.AppleMobileFileIntegrity",
+  "com.apple.driver.ApplePMGR",
+  "com.apple.driver.IODARTFamily",
+  "com.apple.filesystems.apfs",
+  "com.apple.iokit.CoreAnalyticsFamily",
+  "com.apple.iokit.IOAVFamily",
+  "com.apple.iokit.IOAudio2Family",
+  "com.apple.iokit.IOCECFamily",
+  "com.apple.iokit.IOCryptoAcceleratorFamily",
+  "com.apple.iokit.IOGPUFamily",
+  "com.apple.iokit.IOHDCPFamily",
+  "com.apple.iokit.IOMobileGraphicsFamily",
+  "com.apple.iokit.IOReportFamily",
+  "com.apple.iokit.IOSlowAdaptiveClockingFamily",
+  "com.apple.iokit.IOStorageFamily",
+  "com.apple.iokit.IOSurface",
+  "com.apple.kec.Libm",
+  "com.apple.kec.corecrypto",
+  "com.apple.kext.AppleMatch",
+  "com.apple.kext.CoreTrust",
+  "com.apple.security.AppleImage4",
+  "com.apple.security.sandbox",
+  "com.apple.iokit.IOHIDFamily",
+  "com.apple.iokit.IOHIDEventDriver",
+]
+
+# The firmware is the Mu-Silicium TB128FU port (tb128fuPkg, Divar SM6225) of the uefi-tb128fu checkout, with UniXNU,
+# the ramdisk block device driver and DarwinBoot added. The stock ABL carries one statically linked LinuxLoader PE
+# instead of separable vendor DXE modules, so the build uses the Mu driver set only (SimpleFbDxe on the ABL's
+# cont_splash_region); there is no Binaries/tb128fu.
+[firmware]
+config = "xun"                 # Resources/Configs/xun.toml in the Mu-Silicium checkout (--uefi or UNIXNU_UEFI)
+dsc = "Platforms/Xiaomi/xunPkg/xun.dsc"
+fd = "Build/xunPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+preflight = ["scripts/check-xun.py"]   # reads the checkout from UNIXNU_UEFI
+submodules = ["Binaries", "Common/Mu", "Common/Mu_OEM_Sample", "Silicium-ACPI", "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"]
+# Masks a GIC interrupt that has no handler instead of taking it forever (found on sheng with a leftover IPCC interrupt).
+patches = []
+packages = [
+  "{uefi}",
+  "{uefi}/Platforms/Lenovo",
+  "{uefi}/Platforms/Xiaomi",
+  "{tree}/package",
+  "{tree}/drivers/DarwinBoot",
+  "{edk2}",
+  "{uefi}/Common/Mu",
+  "{uefi}/Common/Mu_OEM_Sample",
+  "{uefi}/Silicon/Qualcomm",
+  "{uefi}/Silicon/Silicium",
+  "{uefi}/Silicium-ACPI",
+  "{uefi}/Silicium-ACPI/Platforms/Lenovo",
+  "{uefi}/Silicium-ACPI/Platforms/Xiaomi",
+  "{uefi}/Silicium-ACPI/Silicon/Qualcomm",
+]
+
+[firmware.defines]
+ENABLE_SECUREBOOT = "1"
+MEMORY_PROTECTION = "TRUE"
+SHIP_MODE = "FALSE"
+BUILDID_STRING = "xun-research"
+
+# Image parameters come from Resources/Configs/xun.toml of the checkout. Resources/DTBs/xun.dtb carries
+# /reserved-memory/cont_splash_region@5c000000, so no [[bootimg.dtb_node]] is added.
+[bootimg.image]
+kernel_compression = "none"
+
+# The ramdisk of the boot image: a FAT volume with the UniXNU config, the kernel, its device tree and the optional
+# trust cache and Data seed. DarwinBoot is part of the firmware volume.
+[payload]
+volume = "XUNESP"
+size_mib = 55
+timeout = 2
+loader = "firmware"
+title = "iPadOS 27.2.1 (xun)"
+# DRAM base is 0x40000000. XNU spans from 0x80000000 across contiguous free DRAM.
+dram_size = "0x200000000"
+skip_setup_tool = "scripts/seed-data-skip-setup.py"
+skip_setup_args = ["--no-auto-dim"]
+panic_screen = true
+entry_probe_reset_delay = 0
+entry_probe_reset_before = false
+# The static and System trust caches of this restore image, combined the way UniXNU's payload
+# builder expects them: a 12-byte header (version 2, static offset 12, total length) followed by
+# the two IM4P payloads. The members are:
+#
+#   Firmware/141-09394-225.dmg.aea.trustcache   IM4P "trst", 84576-byte payload
+#   Firmware/141-10410-235.dmg.aea.trustcache   IM4P "trcs", 3168-byte payload
+#
+# and the bundle they make is 87756 bytes with the digest below. Computed from the restore image
+# itself, not copied from another device.
+trust_cache_sha256 = [
+  "8f4b06b0a4907e84be6fce1c66012bc5b027d59885a70cac2775ffa047322193",
+]
+# The generic arguments of the sheng image that apply to this kernel. sheng-pmgr=2 publishes the original PMGR nub
+# through the bridge, which reads and writes no hardware. sheng-data-persist=2 keeps the 8 GiB packed Data seed writable
+# through the userdata store window (a seed above 2 GiB has no volatile backing).
+kernel_args = [
+  "-v",
+  "serial=3",
+  "-progress",
+  "debug=0x14e",
+  "kt_fixed_zones=120",
+  "armcpu-diagnostics=1",
+  "smp=1",
+  "armcpu-edge=1",
+  "armcpu-self-ipi=1",
+  "armcpu-spi-ipi=1",
+  "armcpu-spi-ipi-base=536",
+  "armcpu-timer-intid=19",
+  "sheng-pmgr=2",
+  "-no_slto_panic",
+  "ml-timeout-lock-panic-scale=40",
+  "native-emmc-root=1",
+  "sheng-data-persist=2",
+  "boot-progress=2",
+  "boot-payload-release=1",
+  "-no_corpses",
+  # CpuFreq.c drives both SM6225 clusters to their top level. On 17.7.11 with this argument the
+  # four Cortex-A53 and four Cortex-A73 ran as two kernel clusters and the render server's frames
+  # came from an A73; without it the A73 domain idled at 300 MHz.
+  "xun-cpufreq=1",
+  "vsync=60",
+  "vsync-fixed=1",
+  "sheng-vsync=60",
+  "sheng-vsync-fixed=1",
+  "offline-mobile-graphics-load=1",
+  "offline-legacy-register=1",
+  "offline-legacy-phase=4",
+  "offline-legacy-gop=1",
+  "offline-legacy-unit-scale=1",
+  "offline-legacy-pm=1",
+  "offline-legacy-validate=1",
+  "offline-legacy-transfer=1",
+  "offline-legacy-cpu-present=1",
+  "offline-key-events=1",
+  "sheng-aks=1",
+  "offline-hid-input=1",
+  "offline-hid-home=1",
+  "touch-hid=1",
+  "buttons=1",
+  "touch=5",
+  "sheng-disable-watchdogd=1",
+  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,com.apple.PerfPowerServices,com.apple.iomfb_fdr_loader,com.apple.iconservicesagent",
+]
+
+[payload.adt]
+tool = "scripts/make-xun-adt.py"
+# 0x8030 = 32816: the ApChipID of iPad12,1 in the 24B156 BuildManifest (A13 / H12). The 17.7.11
+# line used 0xCF (207), the iPad7,1's chip; the ADT this tag feeds describes the device, so it
+# has to follow the restore image.
+chip_id = "32816"
+# 4 GiB, the iPad7,1's memory size (sheng, the board that runs iPadOS, owns 0x130000000). The firmware maps the free 0x80000000..0x1c0000000 run as one region. The first
+# boots used 2 GiB: iPadOS reached SpringBoard with 97 processes, but free memory fell to about 5 MiB.
+# Bump from 2 GiB (which left ~4 MiB free at 130 procs) to ~2.94 GiB inside MemoryMapLib's verified RAM Pool 2 (0x80000000..0x140000000, leaving 64 MiB headroom for 2 MiB alignment and EDK2 allocations).
+owned_memory_size = "0x1B8000000"
+root_match_volume_uuid = "043A9710-08A4-44CC-BA81-29F41495EE9F"   # the OS volume of the 24B156 image, see [root]
+# All eight cores (boot CPU 0 first): 0..3 Cortex-A53 (Kryo Silver), 0x100..0x103 Cortex-A73. ArmCpu starts the
+# others with PSCI CPU_ON under sheng-smp=1; "0" keeps the boot CPU only.
+# Bisecting a stall with all eight (2026-10-22: every core reached step 7, but user space stopped at launchd): first one
+# more Cortex-A53 of the boot cluster (tb128fu-007: works, 84 processes at 181 s); then one Cortex-A73 (tb128fu-008:
+# no deadlock, but the root verification ran about 3x slower and launchd was still reading at 180 s, as with all eight;
+# the Cortex-A73 cluster is presumably left at a low clock without a CPU frequency driver). tb128fu-009: the four
+# Cortex-A53 work. tb128fu-012's CpuFreq.c read the Cortex-A73 domain at 300 MHz (and not enabled while its cluster was off),
+# the Cortex-A53s at 1516 MHz; with xun-cpufreq=1 both ask for their top level, so all eight again.
+# tb128fu-056 (experiment) started the boot Cortex-A53 and the four Cortex-A73 only: on one kernel cluster the render server's
+# thread had committed 72% of its frames from a Cortex-A53, 53 ms of CPU per frame; with the A73s, 35 ms. tb128fu-058: all eight as
+# two kernel clusters (cluster-type E/P, make-tb128fu-adt.py) under the Edge scheduler (package/xnu-patches/native-smp-type-clusters.patch,
+# ArmCpu registers each core with its type): every frame from an A73, 36 ms of CPU per frame. (057/057b/059 failed only because the
+# boot diagnostics were compiled against the previous build's struct layout: a kernel config change needs two builds.) The patch is
+# this board's own: the same kernel with one cluster (no cluster-type, as on pipa and sheng) stopped early in user space (tb128fu-058c).
+cpu_regs = "0,1,2,3,0x100,0x101,0x102,0x103"
+packed_data_ramdisk = true
+ipad_identity = true
+unique_chip_id = "required"          # the platform seed is not stored in any repository
