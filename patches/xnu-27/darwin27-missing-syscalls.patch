@@ -1,0 +1,38 @@
+diff --git a/bsd/kern/subr_xxx.c b/bsd/kern/subr_xxx.c
+index e62c6a4..17c7ba4 100644
+--- a/bsd/kern/subr_xxx.c
++++ b/bsd/kern/subr_xxx.c
+@@ -185,3 +185,23 @@ nosys(__unused struct proc *p, __unused struct nosys_args *args, __unused int32_
+ 	}
+ 	return ENOSYS;
+ }
++
++/*
++ * Slots 556 and 557: the iPadOS 27.2.1 userland calls them, xnu-12377 does not declare them, and
++ * nosys would raise SIGSYS. ENOTSUP lets the caller fall back instead of dying. Replace these
++ * bodies when a published XNU tag defines them - see darwin27-missing-syscalls.patch for how they
++ * were found.
++ */
++/* ARGSUSED */
++int
++xun_syscall_556(__unused struct proc *p, __unused struct xun_syscall_556_args *args, __unused int32_t *retval)
++{
++	return ENOTSUP;
++}
++
++/* ARGSUSED */
++int
++xun_syscall_557(__unused struct proc *p, __unused struct xun_syscall_557_args *args, __unused int32_t *retval)
++{
++	return ENOTSUP;
++}
+diff --git a/bsd/kern/syscalls.master b/bsd/kern/syscalls.master
+index 7b4d876..40c213d 100644
+--- a/bsd/kern/syscalls.master
++++ b/bsd/kern/syscalls.master
+@@ -869,3 +869,5 @@
+ 553 AUE_MKFIFOAT	ALL	{ int mkfifoat(int fd, user_addr_t path, int mode); }
+ 554 AUE_MKNODAT	ALL	{ int mknodat(int fd, user_addr_t path, int mode, int dev); }
+ 555 AUE_NULL	ALL { int ungraftdmg(const char *mountdir, uint64_t flags); }
++556 AUE_NULL	ALL	{ int xun_syscall_556(void) NO_SYSCALL_STUB; }
++557 AUE_NULL	ALL	{ int xun_syscall_557(void) NO_SYSCALL_STUB; }

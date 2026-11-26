@@ -1,0 +1,22 @@
+diff --git a/iokit/Kernel/IOStartIOKit.cpp b/iokit/Kernel/IOStartIOKit.cpp
+index d74c063..7b099b5 100644
+--- a/iokit/Kernel/IOStartIOKit.cpp
++++ b/iokit/Kernel/IOStartIOKit.cpp
+@@ -79,8 +79,15 @@ IOKitInitializeTime( void )
+ 
+ // RTC is not present on this target
+ #ifndef BCM2837
+-	IOService::waitForService(
+-		IOService::resourceMatching("IORTC"), &t );
++	/*
++	 * xun: this board has no IORTC service. The Apple RTC driver is not part of the
++	 * closure and there is no such device on SM6225, so the wait below never matches
++	 * and the resource-matching path faults inside IOKitInitializeTime (measured on
++	 * muyu 2026-11-06: data abort before the PEGetUTCTimeOfDay call in
++	 * clock_initialize_calendar). Skip the wait and let the calendar come from
++	 * whatever the platform expert reports.
++	 */
++	(void)t;
+ #endif
+ #if defined(__i386__) || defined(__x86_64__)
+ 	IOService::waitForService(

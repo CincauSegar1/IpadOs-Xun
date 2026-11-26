@@ -1,0 +1,28 @@
+diff --git a/osfmk/console/video_console.c b/osfmk/console/video_console.c
+index 4c1edf1..6c58922 100644
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -3057,6 +3057,23 @@ vcattach(void)
+ {
+ 	vm_initialized = TRUE;
+ 
++	/*
++	 * xun: DarwinBoot leaves its handoff text on the panel in a larger font, and the
++	 * kernel console draws a smaller font over the same rows, so every console line
++	 * (panic dumps included) lands on top of large leftover glyphs and reads as noise.
++	 * Clear once, using the console's own geometry, so the text console starts on
++	 * black. Gated on the same boot argument the port already uses for the text
++	 * console, so a normal graphics boot is unchanged.
++	 */
++	{
++		boolean_t xun_text_console = FALSE;
++		if (PE_parse_boot_argn("-bravearktextconsole", &xun_text_console, sizeof(xun_text_console)) &&
++		    xun_text_console) {
++			initialize_screen(NULL, kPETextScreen);
++			vc_clear_screen(0, 0, 0, vinfo.v_rows, 2);
++		}
++	}
++
+ #if defined(CONFIG_VC_PROGRESS_METER_SUPPORT)
+ 	const boot_args * bootargs  = (typeof(bootargs))PE_state.bootArgs;
+ 

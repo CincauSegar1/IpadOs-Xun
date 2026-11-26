@@ -1,0 +1,37 @@
+# xun, iPadOS 27.2.1 line (24B156) — the device layer of the XNU patch series.
+#
+# Same shape as UniXNU-muyu: this directory holds this board's patches, and the order is the
+# filename order, so the list below is the directory listing and nothing else. A
+# schema_version 2 board never globs a directory; board.toml names
+# device:patches/xnu-27/series and the framework resolves it here.
+# scripts/check-board-os.py fails if this file and `ls *.patch` ever disagree.
+#
+# The arch, soc and os layers are NOT copied in. board.toml references them by prefix and the
+# framework resolves each into its own checkout, exactly as UniXNU-uke does.
+#
+# Five patches, and what each one is for on THIS board:
+#
+#   xun-console-clear        No UART in the XNU closure for SM6225, so the panel is the only
+#                            output there is. DarwinBoot leaves its handoff text on it in a
+#                            larger font and the kernel console draws over it.
+#   xun-source-storage-start NativeEmmc and RamBlock are built in, and their class registration
+#                            lives in native_source_storage_start(). Without it IOKit matches the
+#                            personality but not the class, and nothing publishes the volumes.
+#   native-stack-shift       A 4 KiB kernel on 32 KiB-aligned stacks. AMFI's PAGE_SHIFT_CONST
+#                            reader bounds-checks against the stack and fails at fixed call
+#                            depths without this.
+#   offline-no-iortc-wait    There is no IORTC device on SM6225 and the wait never matches.
+#                            Measured on muyu as a data abort inside IOKitInitializeTime; the
+#                            reasoning is the same here - a wait for a service that cannot exist
+#                            is not a boot step.
+#   darwin27-missing-syscalls
+#                            The 24B156 userland calls syscall numbers 556 and 557, which
+#                            xnu-12377 does not declare; `nosys` would kill the caller with
+#                            SIGSYS. Found with tools/ipados27/abi-census.py over the shipped
+#                            dyld shared cache. The patch body explains how.
+
+xun-console-clear.patch
+xun-source-storage-start.patch
+native-stack-shift.patch
+offline-no-iortc-wait.patch
+darwin27-missing-syscalls.patch
