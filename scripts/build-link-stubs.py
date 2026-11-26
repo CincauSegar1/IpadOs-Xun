@@ -26,6 +26,7 @@ def compile_archive(source_name, out_subdir, obj_name, archive_name):
 def main():
     compile_archive('LinkStubs.c', 'build/link-stubs', 'LinkStubs.o', 'libLinkStubs.a')
     compile_archive('VerifiedRootKeyStub.c', 'build/verified-root-key', 'VerifiedRootKey.o', 'libVerifiedRootKey.a')
+    compile_archive('RamBlockStubs.c', 'build/ram-block-stubs', 'RamBlockStubs.o', 'libRamBlockStubs.a')
 
 
 if __name__ == '__main__':

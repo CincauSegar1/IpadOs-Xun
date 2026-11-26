@@ -79,6 +79,9 @@ if [ -d "${UNIXNU_DIR}" ]; then
     echo "--> Configuring and building 4K XNU kernel..."
     pushd "${UNIXNU_DIR}" >/dev/null
     python3 unixnu defconfig xun_defconfig -D "${DEVICE_DIR}"
+    # Same bootstrap-link fix the CI job applies; a local build without it stops at the link with
+    # undefined native_verified_block_*/native_ram_block_* symbols.
+    python3 "${DEVICE_DIR}/scripts/apply-bootstrap-link-skip.py" .
     python3 unixnu build kernel -D "${DEVICE_DIR}"
     python3 unixnu build payload -D "${DEVICE_DIR}" || true
     popd >/dev/null
