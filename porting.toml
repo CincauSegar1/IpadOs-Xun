@@ -26,22 +26,30 @@ configuration = [
   "board.os_profile = 'ipados-27.2.1-24B156'"
 ]
 procedure = [
-  "Cloned UniXNU and UniXNU-tb128fu baseline repos",
+  "Cloned the UniXNU framework and the UniXNU-xun device baseline",
   "Scaffolded UniXNU-xun repository",
   "Extracted and parsed DTB from official HyperOS fastboot images (vendor_boot.img and dtbo.img)"
 ]
 findings = [
-  "SM6225 on xun uses eMMC 5.1 (sdhci@4744000) instead of UFS (tb128fu), requiring NativeEmmc driver",
-  "Kryo 265 Silver cores lack 16 KiB MMU granule, requiring 4 KiB kernel page tables and CONFIG_XNU_NATIVE_CS_HASH_CACHE"
+  "SM6225 on xun uses eMMC 5.1 (sdhci@4744000) instead of UFS, requiring the NativeEmmc driver",
+  "Kryo 265 Silver cores lack 16 KiB MMU granule, requiring 4 KiB kernel page tables and CONFIG_XNU_NATIVE_CS_HASH_CACHE",
+  "The 24B156 OS and Cryptex1,SystemOS images are AEA1 archives; renegade-rs expands them from the archive's own com.apple.wkms.fcs-key-url with no macOS, hdiutil or loop device",
+  "The 24B156 userland calls syscalls 556 and 557, which xnu-12377 does not declare; tools/ipados27/abi-census.py found them in the dyld shared cache and patches/xnu-27 fails them with ENOTSUP instead of SIGSYS",
+  "mount -P 1 treats /chosen/boot-manifest-hash as its only fatal input, and mount(8) derives /private/preboot/<hash> from it, so the ADT and the root image have to carry the same value",
+  "SM6225 has no CTRR, so /chosen/kernel-ctrr-to-be-enabled = 0 is the truthful value; without it dtrace_early_init() panics"
 ]
 completion = [
-  "Stage 1 baseline initialized and board configuration verified against device tree"
+  "Stage 1 baseline initialized and board configuration verified against device tree",
+  "OS target read from the 24B156 BuildManifest and the APFS volume superblocks; the device patch series is generated against xnu-12377.121.6 and applies cleanly"
 ]
 limits = [
-  "Initial bringup underway"
+  "systemos_image_sha256 and the two [kernel.prelink] values need a built kernelcache before they can be filled",
+  "The SM6225 SoC layer (feeds.toml source sm6225) is not published yet, so the two soc: patches have no source",
+  "No GPU driver: SM6225 is an Adreno 610 (a6xx, no GMU)"
 ]
 next_action = [
-  "Complete board.toml and xun_defconfig parameters"
+  "Build the kernel for this profile and fill [kernel.prelink] and [root] systemos_image_sha256",
+  "Make the first boot on hardware and read the result off the panel"
 ]
 evidence = [
   { kind = "source", reference = "board.toml", result = "Scaffolded board.toml, local.toml, and proprietary-files.txt for xun" }

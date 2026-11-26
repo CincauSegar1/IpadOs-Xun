@@ -8,7 +8,7 @@
 # UniXNU-muyu pins UniXNU-sm7675-common for its SoC; xun needs the equivalent for
 # SM6225 (bengal/khaje), and until it is published the two soc: patches
 # (sheng-platform-power, native-smp-secondary) have nowhere to come from.
-# scripts/check-xun-board.py reports this as the first missing input rather than
+# scripts/check-board-os.py reports this as the first missing input rather than
 # letting a build fail later with an unresolved patch path.
 
 [[source]]
@@ -18,6 +18,8 @@ git = "https://github.com/UniXNU/UniXNU-sm6225-common"
 ref = "main"
 # Empty on purpose: pinning a commit that does not exist would be a claim the file
 # cannot back. Fill this in together with the ref once the repository is public.
+# Verified 2026-11-26: github.com/UniXNU/UniXNU-sm6225-common returns 404, so this is not
+# a placeholder for a private repo - there is no SM6225 layer published yet.
 commit = ""
 
 [[source]]

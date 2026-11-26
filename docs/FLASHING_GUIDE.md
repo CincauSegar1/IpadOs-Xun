@@ -82,16 +82,9 @@ The repository includes a standalone 8 KiB diagnostic image `out/xun/boot-green.
 
 ## 5. Step 2: Build UEFI Firmware & 4K XNU Kernel
 
-Because compiling XNU requires Apple's `iphoneos` SDK (available on macOS) and compiling Mu-Silicium requires Clang + EDK2 BaseTools, the repository provides two turnkey pipelines:
+Because compiling XNU requires Apple's `iphoneos` SDK (available on macOS) and compiling Mu-Silicium requires Clang + EDK2 BaseTools, build locally:
 
-### Option A: Cloud CI Build (GitHub Actions)
-1. Push this repository to your GitHub account.
-2. The workflow [`.github/workflows/build.yml`](../../.github/workflows/build.yml) triggers automatically:
-   * **`build-uefi` (Ubuntu runner):** Compiles `SILICIUM_UEFI.fd` (3 MiB) using Clang and EDK2 BaseTools.
-   * **`build-xnu` (macOS 14 runner):** Compiles `kernel.macho` and generates `xun-single.adt` and `xun-smp.adt` using Xcode's `iphoneos` SDK with `MACHINE_CONFIGS=BCM2837`.
-3. Download the zipped artifacts (`xun-uefi` and `xun-kernel-payload`) from the GitHub Actions run page.
-
-### Option B: Local Build on macOS / Hackintosh
+### Local Build on macOS / Hackintosh
 1. Boot into your macOS or Hackintosh partition.
 2. Clone this repository.
 3. Run the turnkey local build script:
@@ -100,6 +93,10 @@ Because compiling XNU requires Apple's `iphoneos` SDK (available on macOS) and c
    ./scripts/build-macos-local.sh
    ```
 4. Output boot artifacts will be assembled into `out/xun/boot.img`.
+
+> **GitHub Actions is disabled on this repository.** The workflows in `.github/workflows/` are kept
+> as a record of how the image is built, but pushing does not start a runner. Build locally, or
+> re-enable Actions in Settings deliberately.
 
 ---
 
@@ -112,6 +109,21 @@ The `userdata` partition holds the root filesystem slices from `iPad_10.2_2021_2
    python scripts/make-xun-userdata.py
    ```
    *This expands `141-09394-225.dmg.aea` (OS slice, 7.2 GiB) and `141-10410-235.dmg.aea` (SystemOS slice, 2.25 GiB) — both Apple Encrypted Archives, decrypted with the key from the archive's own `com.apple.wkms.fcs-key-url` — prepends the `SHNGROOT` eMMC header, and outputs `out/xun/userdata.img`.*
+
+   **The image must also contain `/private/preboot/<boot-manifest-hash>/usr/standalone/firmware`.**
+   The iPadOS 27 userland's first act is `mount -P 1`, and the one input it treats as fatal is
+   `/chosen/boot-manifest-hash` (a failed read is exit 66 and launchd fails the mount-phase-1 boot
+   task). `mount(8)` names the boot-set directory from that hash and bind-mounts its
+   `usr/standalone/firmware` over `/usr/standalone/firmware`. The root volume is mounted read-only
+   at runtime, so the directory has to be in the image as it is built.
+
+   `tools/ipados27/build-simg.sh` builds the root volume with `--preboot-hash` (defaulting to
+   `board.toml`) and writes that directory into the HFSX image as it is built. This script
+   (`make-xun-userdata.py`) only assembles the SHNGROOT manifest and the two windows from the
+   unmodified `.dmg` payloads, so it does **not** create the directory — use `build-simg.sh` for a
+   bootable image. If you build the root volume some other way, create the directory yourself and
+   keep the hex identical, uppercase, in three places: `board.toml`
+   `[payload.adt] boot_manifest_hash`, the ADT's `/chosen/boot-manifest-hash`, and the image.
 2. Put the tablet in Fastboot mode:
    ```bash
    adb reboot bootloader

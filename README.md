@@ -118,8 +118,9 @@ the next two slots and 24B156 added them as a pair.
 | `drivers/XunEmmc/` | NativeEmmc: Qualcomm SDHCI MSM for eMMC 5.1 |
 | `package/` | Board package: display, touch, boot log, boot progress, identity |
 | `scripts/` | ADT generation, userdata, boot image, board checks, log readers |
+| `scripts/make-xun-adt.py` | Generates the ADT, including `/chosen/boot-manifest-hash`, `kernel-ctrr-to-be-enabled` and the root-matching UUID |
 | `scripts/data/owner-os-policy-27.2.1.json` | The two `.aea` containers, their volume UUIDs and the trust-cache digests |
-| `tools/ipados27/` | IPSW → sparse root image, kernel build helper, ABI census |
+| `tools/ipados27/` | IPSW → sparse root image (with the `/private/preboot/<hash>` boot-set directory baked in), kernel build helper, ABI census |
 | `uefi/` | The `xunPkg` firmware package and the device tree it embeds |
 | `dts/xun.dts` | The board device tree |
 | `docs/FLASHING_GUIDE.md` | How to flash, and what each partition is for |
@@ -155,6 +156,7 @@ python3 scripts/make-xun-adt.py --dram-size 0x200000000 --owned-memory-size 0x1B
   --cpu-regs 0,1,2,3,0x100,0x101,0x102,0x103 --output out/xun/xun-smp.adt
 
 tools/ipados27/build-simg.sh /path/to/iPad_10.2_2021_27.2.1_24B156_Restore.ipsw
+# PREBOOT_HASH defaults to board.toml [payload.adt] boot_manifest_hash; override only together with it
 tools/ipados27/abi-census.py out/cache/dyld_shared_cache_arm64e* --json out/abi.json
 ```
 
@@ -164,6 +166,11 @@ tools/ipados27/abi-census.py out/cache/dyld_shared_cache_arm64e* --json out/abi.
 kernel and ADT on `macos-latest` (it selects the newest Xcode on the image and needs Clang 20+ for
 `-Wno-unnecessary-virtual-specifier`), and the root image on `ubuntu-latest`. `bisect.yml` is the
 patch-driver variant for narrowing a boot stall.
+
+The workflows are in the tree as a record of how the image is built, but **GitHub Actions is
+disabled on this repository**. Nothing here is built by pushing: the kernel and the payload are
+built locally (`scripts/build-macos-local.sh`) and flashed by hand. Re-enable the workflows in
+Settings → Actions only for a deliberate run, and note that a push then starts one.
 
 ## Flash
 
@@ -187,10 +194,39 @@ stock boot image — it is a property of the bootloader, not of the image. Write
 | Area | State |
 | --- | --- |
 | OS profile, IPSW members, volume UUIDs, trust-cache digest | Read from the 24B156 image itself |
+| `/chosen/boot-manifest-hash` | **Set**, and the root image is built to match it — see below |
+| `/chosen/kernel-ctrr-to-be-enabled` | **Set to 0.** SM6225 has no CTRR, so kernel text is writable; without the property `ml_unsafe_kernel_text()` asserts and `dtrace_early_init()` panics. |
 | `[root] systemos_image_sha256` | **Still empty.** The SystemOS volume was expanded and read for its UUID, but the raw image digest has not been taken; it goes in once measured. |
 | `[kernel.prelink] kernelcache_sha256`, `early_security_init` | **Still empty.** Both are offsets inside a built kernelcache and only exist after the first kernel build of this profile. |
 | `scripts/check-board-os.py` | Reports every empty value above as `pending` and fails only on an inconsistency. |
 | GPU | Deferred. SM6225 is an Adreno 610 (a6xx, no GMU); the ADT describes the block so it can be named truthfully, and no driver attaches to it. |
+
+### Why `boot-manifest-hash` decides whether it boots at all
+
+The first thing the iPadOS 27 userland does is run `mount -P 1`. It runs with env 0, because no
+user-device-tree fstab exists, and in that mode a missing Data volume and a missing
+`/private/preboot` bindfs source are only warnings. The one input that is not a warning is
+`/chosen/boot-manifest-hash`: a failed read there makes `mount` exit 66 and launchd fails the
+`mount-phase-1` boot task, so the boot stops before SpringBoard.
+
+`mount(8)` uses that hash as a path. It binds `/private/preboot/<UPPERCASE HEX>/usr/standalone/firmware`
+over `/usr/standalone/firmware`, so the hash, the ADT and the root image are a single decision, and
+the root volume is mounted read-only at runtime — the directory cannot be created on the tablet.
+
+This repository keeps them in step in two places:
+
+- `board.toml [payload.adt] boot_manifest_hash` is forwarded by the framework as
+  `--boot-manifest-hash`, and `scripts/make-xun-adt.py` writes it into `/chosen`.
+- `tools/ipados27/build-simg.sh` passes the same value as `--preboot-hash`, and `renegade-rs`
+  writes `/private/preboot/<HASH>/usr/standalone/firmware` into the image as it builds it, filled
+  from the `usr/standalone/firmware` the OS already ships.
+
+The value itself is this port's own bring-up boot-set identity — SHA-384 of `XunBringup.BootSet.v1`
+plus a NUL. It is not an Apple personalization manifest and nothing derives it; it only has to be
+the same 96 hex characters in all three places. Changing it means rebuilding the root image.
+
+`board.toml [payload.adt] filesystems = false` ships no `/filesystems` node, because that node
+raises `mount`'s env to 1 and makes those two warnings fatal.
 
 ## Credits
 
@@ -203,7 +239,7 @@ Original project:
 https://github.com/UniXNU/UniXNU
 
 The board layout, the OS line, the four-layer kernel patch series and the device-layer patches
-follow [UniXNU-muyu](https://github.com/UniXNU/UniXNU-muyu), which runs the same iPadOS 27 line on
+follow [UniXNU-muyu](https://github.com/yehua123-oos/UniXNU-muyu), which runs the same iPadOS 27 line on
 an SM8635 tablet; this repository keeps its shape and replaces the SoC, the storage controller and
 the panel.
 

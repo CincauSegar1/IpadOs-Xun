@@ -62,8 +62,36 @@
   `iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw` (`Firmware/044-76040-038.dmg.trustcache`).
 - On the 27.2.1 line the pair to stage is `Firmware/141-09394-225.dmg.aea.trustcache` and
   `Firmware/141-10410-235.dmg.aea.trustcache` from
-  `iPad_10.2_2021_27.2.1_24B156_Restore.ipsw`. The digests are not pinned yet: they go into
-  `board.toml` `[payload] trust_cache_sha256` only once the built bundle is the one that boots.
+  `iPad_10.2_2021_27.2.1_24B156_Restore.ipsw`. Both are DER-wrapped `IM4P` — `trst` for the static
+  one (84576-byte payload) and `trcs` for the System one (3168 bytes). Combined the way the payload
+  builder expects (12-byte header of version 2, static offset 12 and total length, then the two
+  payloads) they make 87756 bytes with digest `8f4b06b0…`, which `board.toml`
+  `[payload] trust_cache_sha256` now pins. The container and payload digests are recorded in
+  `scripts/data/owner-os-policy-27.2.1.json`.
+
+### 3b. The boot-set directory (`/chosen/boot-manifest-hash`)
+- The iPadOS 27 userland's first act is `mount -P 1`, run with env 0 because no user-device-tree
+  fstab exists. In that mode a missing Data volume and a missing `/private/preboot` bindfs source
+  are warnings; the one input that is fatal is `/chosen/boot-manifest-hash`. A failed read there is
+  `mount` exit 66, and launchd fails the `mount-phase-1` boot task, so the boot stops before
+  SpringBoard.
+- `mount(8)` turns the hash into a path: it bind-mounts
+  `/private/preboot/<UPPERCASE HEX>/usr/standalone/firmware` over `/usr/standalone/firmware`. The
+  root volume is mounted read-only at runtime, so the directory cannot be created on the tablet —
+  it has to be in the image as it is written.
+- Three places must agree: `board.toml` `[payload.adt] boot_manifest_hash`, the ADT's
+  `/chosen/boot-manifest-hash` (written by `scripts/make-xun-adt.py --boot-manifest-hash`), and the
+  root image (`tools/ipados27/build-simg.sh` `--preboot-hash`, which `renegade-rs root-ipsw`
+  writes in at build time).
+- The value is this port's own bring-up boot-set identity, SHA-384 of `XunBringup.BootSet.v1\0`:
+  `033991f9751b0c3e5225fe66c3d7b773c4228fcccbe3805209b74ca187b1b37bf7f870cc96cd106ae9415ef0e7f30b2f`.
+  It is not an Apple personalization manifest and nothing derives it; it only has to be the same
+  96 hex characters in all three places.
+- `board.toml` `[payload.adt] filesystems = false` ships no `/filesystems` node, because that node
+  raises `mount`'s env to 1 and makes those two warnings fatal.
+- Related: `/chosen/kernel-ctrr-to-be-enabled = 0`. SM6225 has no CTRR, so kernel text is writable
+  and 0 is the truthful value; without the property `ml_unsafe_kernel_text()` asserts and
+  `dtrace_early_init()` panics on `machine_routines.c:3379`.
 
 ### 4. eMMC 5.1 Storage Driver & 512-Byte Sector Unit Tests
 - **Driver:** `UniXNU-xun/drivers/XunEmmc`

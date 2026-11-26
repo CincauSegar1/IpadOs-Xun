@@ -8,8 +8,11 @@ CONFIG_XNU_ARM_DT_PLATFORM=y
 CONFIG_XNU_ARMCPU=y
 CONFIG_XNU_NATIVE_AES=y
 
-# NativeEmmc: Qualcomm SDHCI MSM (sdhci@4744000) eMMC 5.1
-# Builds libXunEmmc.a and copies to build/sheng-ufs/libShengUfs.a for upstream XNU_NATIVE_UFS linkage.
+# NativeEmmc: Qualcomm SDHCI MSM (sdhci@4744000) eMMC 5.1.
+# CONFIG_XNU_NATIVE_UFS is the framework's storage-linkage switch (the name is historical: it
+# gates the XNU_NATIVE_* block-storage linkage that NativeEmmc also uses). The driver that actually
+# attaches on this board is CONFIG_XNU_NATIVE_EMMC; libXunEmmc.a is copied to
+# build/sheng-ufs/libShengUfs.a because that is the path the framework links.
 CONFIG_XNU_NATIVE_UFS=y
 CONFIG_XNU_SOURCE_STORAGE=n
 CONFIG_XNU_NATIVE_EMMC=y
