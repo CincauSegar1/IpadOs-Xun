@@ -145,6 +145,13 @@ export UNIXNU_UEFI=/path/to/uefi-xun        # Mu-Silicium checkout with xunPkg
 scripts/build-macos-local.sh
 ```
 
+`git submodule update --init` is not optional. The display and keystore halves of this port live
+in `UniXNU/drivers/GopFramebuffer` and `UniXNU/drivers/AppleKeyStoreState`, which are submodules
+of the framework; without them the directories exist and are empty, and
+`scripts/build-gop-legacy-display.py` fails looking for `drivers/GopFramebuffer/NativeLegacyDisplay.cpp`.
+Nothing in this repository vendors them — `board.toml` `[components] include` names them and the
+framework's `components.toml` resolves each to a pinned commit.
+
 **Framework requirement.** `scripts/unixnu/payload.py` in the UniXNU framework builds the ADT
 command from a fixed list of `[payload.adt]` keys. This board needs `boot_manifest_hash` on that
 list (forwarded as `--boot-manifest-hash`) and `filesystems = false` (forwarded as
