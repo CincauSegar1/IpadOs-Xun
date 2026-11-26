@@ -236,7 +236,7 @@ stock boot image — it is a property of the bootloader, not of the image. Write
 | `/chosen/boot-manifest-hash` | **Set**, and the root image is built to match it — see below |
 | `/chosen/kernel-ctrr-to-be-enabled` | **Set to 0.** SM6225 has no CTRR, so kernel text is writable; without the property `ml_unsafe_kernel_text()` asserts and `dtrace_early_init()` panics. |
 | `[root] systemos_image_sha256` | **Measured.** 6,174,015,488 bytes expanded from `141-10410-235.dmg.aea`, digest `19b656d4…`. |
-| `[kernel.prelink] kernelcache_sha256` | **Measured.** The stock `kernelcache.release.ipad12p` (21,687,452 bytes), which is what the prelink is cut against. |
+| `[kernel.prelink] kernelcache_sha256` | **Measured.** The stock 24B156 kernelcache *after* IM4P unwrap, LZFSE decode and arm64 slice extraction — 66,715,648 bytes. The IM4P container's own hash is a different number and is recorded separately as `kernelcache_container_sha256`. |
 | `[kernel.prelink] early_security_init` | **Still empty, deliberately.** It is an address inside *our* built kernelcache; the stock one cannot supply it and a copied value fails in AMFI on hardware. `scripts/inspect-prelink-callsite.py` reads it by symbol once a kernel exists. |
 | The `native-stack-shift` prelink binding | **Not yet made.** The patch defines `unixnu_kernel_stack_shift`; what makes it take effect is a prelink fixture entry binding AMFI's one `PAGE_SHIFT_CONST` GOT slot to it, and that fixture is cut from a built kernelcache — so it is an after-the-first-build step, like `kernelcache_sha256`. Defining the symbol alone changes nothing. |
 | `scripts/check-board-os.py` | Reports every empty value above as `pending` and fails only on an inconsistency. |

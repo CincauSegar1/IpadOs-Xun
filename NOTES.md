@@ -117,9 +117,16 @@
 - **Panic & Retained Log Diagnostic Reader:** `UniXNU-xun/scripts/read-xun-log.py`
 
 ### 3c. Where the `[kernel.prelink]` values come from
-- `kernelcache_sha256` is the digest of `kernelcache.release.ipad12p` **as shipped in the IPSW**
-  (21,687,452 bytes, `e9f46648e9a4840de016e6dd90e3ea3f9980811fb6e51efd97812572456a9633`). It is
-  what the prelink is cut against, so it is the stock artefact and not a build of ours.
+- `kernelcache_sha256` is the digest of the **decompressed arm64 Mach-O** that
+  `unixnu.ipsw.kernelcache()` writes to `out/ipsw/24B156/kernelcache.decompressed`: 66,715,648
+  bytes, `19a5fc8c7eed62377995fda89b2f620760e99613aa00c27427240c83df555912`. Getting there means
+  unwrapping the IM4P, LZFSE-decoding the payload, and taking the arm64 slice out of the fat file.
+- The IM4P **container** hash of `kernelcache.release.ipad12p` as it sits in the IPSW is a
+  different number — 21,687,452 bytes,
+  `e9f46648e9a4840de016e6dd90e3ea3f9980811fb6e51efd97812572456a9633`. It is kept as
+  `kernelcache_container_sha256` because it identifies the artefact, but putting it in the pin slot
+  makes the build stop with "does not match the pin" for a value that looks right. That happened,
+  and `scripts/check-board-os.py` now reports an error if the two are ever equal.
 - `early_security_init` is an address **inside our built kernelcache**, so no stock artefact can
   supply it. Copying `0xfffffff005ab4ae0` from the 21H461 line, or the reference board's value,
   produces a kernel that links and boots until AMFI — the least debuggable place a wrong number

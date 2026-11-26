@@ -135,13 +135,23 @@ archives = [
 ]
 
 # Nothing in this block is transferable from the 17.7.11 line: it is keyed to the 24B156
-# KernelCache. Both values are empty until the first kernel build of this profile has run and its
-# kernelcache.release.ipad12p has been read. scripts/check-xun.py reports them as blocking rather
-# than letting a build proceed on a stale offset.
+# KernelCache. kernelcache_sha256 is now measured from that IPSW; early_security_init is still
+# empty and cannot be measured from any stock artefact, because it is an address inside the
+# kernelcache this repository emits. scripts/check-board-os.py reports it as pending rather than
+# letting a build proceed on a guess.
 [kernel.prelink]
 tool = "kits/XnuPrelink/emit_prelink.py"
 kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
-kernelcache_sha256 = "e9f46648e9a4840de016e6dd90e3ea3f9980811fb6e51efd97812572456a9633"
+# The digest unixnu.ipsw.kernelcache() checks: of the Mach-O it leaves in
+# out/ipsw/24B156/kernelcache.decompressed, i.e. after the IM4P payload has been LZFSE-decoded and
+# the arm64 slice taken out of the fat file. 66715648 bytes.
+#
+# Not the digest of kernelcache.release.ipad12p as it sits in the IPSW. That file is a 21687452-byte
+# IM4P wrapper around compressed data and hashes to e9f46648e9a4840de016e6dd90e3ea3f9980811fb6e51efd97812572456a9633,
+# which is a different thing and is rejected by the check above. Both are recorded here because the
+# container digest identifies the artefact and the Mach-O digest is what the build compares.
+kernelcache_sha256 = "19a5fc8c7eed62377995fda89b2f620760e99613aa00c27427240c83df555912"
+kernelcache_container_sha256 = "e9f46648e9a4840de016e6dd90e3ea3f9980811fb6e51efd97812572456a9633"
 slide = "-0x1000000"
 # Was com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0 on 21H461. The address is an
 # offset inside the kernelcache this prelink is emitted against, and it moves with every build of

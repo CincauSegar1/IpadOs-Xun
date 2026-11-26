@@ -108,7 +108,7 @@ def main():
          'read off the expanded OS / Cryptex1,SystemOS volumes (tools/ipados27/build-simg.sh)'),
         ('payload', ('trust_cache_sha256',), 'digest of the static+System trust bundle this images boots with'),
         ('kernel.prelink', ('kernelcache_sha256',),
-         'digest of the kernelcache.release.ipad12p this prelink was cut against'),
+         'digest of the LZFSE-decoded arm64 kernelcache Mach-O this prelink is cut against'),
     ):
         for key in keys:
             raw = toml_value(board, section, key)
@@ -117,6 +117,20 @@ def main():
                 pending.append(f'[{section}] {key} is empty: {why}')
             else:
                 ok.append(f'[{section}] {key}')
+
+    # kernelcache_sha256 is checked against the Mach-O unixnu.ipsw.kernelcache() leaves behind,
+    # not against the IM4P container in the IPSW - they hash differently, and the container digest
+    # is recorded separately as kernelcache_container_sha256. Confusing the two is exactly the
+    # mistake this guard exists for: the build says "does not match the pin" for a value that
+    # looks right, because it named a different artefact.
+    kc_pin = unquote(toml_value(board, 'kernel.prelink', 'kernelcache_sha256') or '')
+    kc_container = unquote(toml_value(board, 'kernel.prelink', 'kernelcache_container_sha256') or '')
+    if kc_pin and kc_container and kc_pin == kc_container:
+        blocking.append('[kernel.prelink] kernelcache_sha256 equals kernelcache_container_sha256; '
+                        'it must be the decompressed Mach-O, which is a different digest from the '
+                        'IM4P container in the IPSW')
+    elif kc_pin:
+        ok.append('[kernel.prelink] kernelcache_sha256 is the Mach-O pin, distinct from the container')
 
     prelink_esi = toml_value(board, 'kernel.prelink', 'early_security_init')
     if prelink_esi is None or unquote(prelink_esi) == '':
