@@ -40,7 +40,12 @@ def find_unixnu_root(explicit):
     require(False, 'Cannot locate UniXNU checkout (pass --unixnu)')
 
 
-def find_os_dmg(unixnu_root, device_root, explicit):
+def find_os_image(unixnu_root, device_root, explicit):
+    """The OS volume to read /private/var from: a decrypted .dmg, or an encrypted .dmg.aea.
+
+    24B156 ships 141-09394-225.dmg.aea, AEA encrypted. unixnu.ipsw.Ipsw.disk_image() decrypts it
+    with macOS /usr/bin/aea, so an .aea is the normal case on this line, not the exception.
+    """
     if explicit:
         p = Path(explicit).resolve()
         require(p.is_file(), f'OS image not found: {p}')
@@ -49,8 +54,20 @@ def find_os_dmg(unixnu_root, device_root, explicit):
         'out/ipsw/*/044-76040-038.dmg',
         '.cache/ipsw/*/044-76040-038.dmg',
         'out/ipsw/*/*.dmg',
+        'out/ipsw/*/*.dmg.aea',
         '.cache/ipsw/*/*.dmg',
+        '.cache/ipsw/*/*.dmg.aea',
     ]
+    # Read /private/var straight from the IPSW when it is on this machine: that is orders of
+    # magnitude smaller than the 7.7 GB OS member, and it is the same data the fetch would produce.
+    if os.environ.get('UNIXNU_IPSW') or (device_root / 'board.toml').is_file():
+        try:
+            staged = fetch_var_from_ipsw(unixnu_root, device_root)
+        except Exception as error:  # noqa: BLE001 - any failure here just means "fall back to the dmg"
+            print(f'make-xun-data-seed: IPSW seed path unavailable ({error})', file=sys.stderr)
+        else:
+            if staged is not None:
+                return staged
     for base in (unixnu_root, device_root):
         for pat in patterns:
             hits = sorted(base.glob(pat))
@@ -58,6 +75,29 @@ def find_os_dmg(unixnu_root, device_root, explicit):
                 # Pick largest DMG if wildcard matched multiple.
                 return max(hits, key=lambda h: h.stat().st_size)
     require(False, 'Fetched iPadOS OS .dmg not found (run unixnu ipsw fetch OS first)')
+
+
+def fetch_var_from_ipsw(unixnu_root, device_root):
+    """Read /private/var out of the mounted-able OS .dmg.aea inside the IPSW, or return None.
+
+    `unixnu ipsw fetch OS` extracts a 7,715,519,360-byte member to disk before anything can read it.
+    The same data is already inside the archive, so when the IPSW is local this decrypts it in place
+    into the unixnu cache and hands back the .dmg that Ipsw.disk_image() writes.
+    """
+    sys.path.insert(0, str(unixnu_root / 'scripts'))
+    from unixnu import ipsw as ipsw_mod
+    from unixnu.cli import parser
+    from unixnu.config import Context
+
+    ctx = Context(parser().parse_args(['ipsw', 'info', '-D', str(device_root)]))
+    source = ipsw_mod.Ipsw(ctx)
+    if source.remote:
+        print('make-xun-data-seed: IPSW is remote; the OS member has to be fetched first', file=sys.stderr)
+        return None
+    name, size, _ = source.info('OS')
+    print(f'make-xun-data-seed: OS member {name} ({size >> 20} MiB) in the local IPSW')
+    target = source.disk_image('OS')
+    return target if target.is_file() else None
 
 
 def hdiutil_attach_plist(args):
@@ -154,7 +194,7 @@ def main():
     require(32 <= args.size_mb <= 2048, f'--size-mb must be 32..2048 for sparse RAM mode (got {args.size_mb})')
     unixnu_root = find_unixnu_root(args.unixnu)
     device_root = args.device.resolve()
-    os_dmg = find_os_dmg(unixnu_root, device_root, args.os_dmg)
+    os_dmg = find_os_image(unixnu_root, device_root, args.os_dmg)
 
     sys.path.insert(0, str(unixnu_root / 'scripts'))
     sys.path.insert(0, str(unixnu_root / 'drivers/DarwinBoot/Test'))

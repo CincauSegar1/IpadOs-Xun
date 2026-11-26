@@ -185,11 +185,12 @@ jobs:
           assert cap_old in cap_text, 'Expected BOOTSTRAP_TABLE_SIZE 16-page entry missing'
           cap.write_text(cap_text.replace(cap_old, cap_new, 1))
           PY
-          # Only the kernelcache. The members come from board.toml [ipsw] fetch, and OS is
-          # deliberately not among them: it is 7.7 GB and nothing in the kernel or payload build
-          # reads it. `unixnu build kernel` would already fetch what it needs on its own; the
-          # explicit call is here so the cache is populated before the two-pass build starts.
-          python3 unixnu ipsw fetch KernelCache -D ../IpadOS-Xun
+          # OS is here because scripts/make-xun-data-seed.py copies /private/var out of it to build
+          # the Data seed - without it that step stops with "Fetched iPadOS OS .dmg not found".
+          # It is 7,715,519,360 bytes (141-09394-225.dmg.aea), stored uncompressed in the zip, so it
+          # is the expensive member of this run; the actions/cache step above is what keeps it from
+          # being re-read on every push. KernelCache is 21 MB by comparison.
+          python3 unixnu ipsw fetch KernelCache OS -D ../IpadOS-Xun
           cp ../IpadOS-Xun/package/xnu-patches/native-smp-type-clusters.patch patches/xnu/
           python3 unixnu defconfig xun_defconfig -D ../IpadOS-Xun
           python3 ../IpadOS-Xun/scripts/make-xun-data-seed.py --output out/xun-data.dbr --device ../IpadOS-Xun --unixnu . --config auto
