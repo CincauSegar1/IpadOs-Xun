@@ -1,0 +1,150 @@
+name: Bisect early boot (re-probe an existing kernel)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_run:
+        description: "Run id holding xun-kernel-payload"
+        default: "43297354726"
+      uefi_run:
+        description: "Run id holding xun-uefi"
+        default: "43301210338"
+      delay:
+        description: "Seconds to wait before PSCI reset (probe fires after MMU on, or after the call)"
+        default: "6"
+      reset_after:
+        description: "Symbol; empty = stage 3 (right after MMU enable)"
+        default: ""
+      reset_in:
+        description: "Function containing the call"
+        default: "_arm_init"
+      occurrence:
+        description: "Nth call to the symbol"
+        default: "1"
+      reset_before:
+        description: "true = reset at call site before the call"
+        default: "false"
+      no_probe:
+        description: "true = skip patch-xnu-entry-probe.py (boot kernel unmodified)"
+        default: "false"
+      fix_armio:
+        description: "true = patch payload ADT /arm-io to non-zero 0x04000000 base and relative child offsets"
+        default: "false"
+      fix_cluster:
+        description: "true = mask cluster-type properties in payload ADT (MAX_CPU_CLUSTERS=1)"
+        default: "false"
+      fix_bootargs:
+        description: "true = remove cs_enforcement_disable=1 and amfi_get_out_of_my_way=1 from EFI/UniXNU/unixnu.toml"
+        default: "false"
+
+jobs:
+  bisect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: IpadOS-Xun
+      - uses: actions/checkout@v4
+        with:
+          repository: Project-Silicium/Mu-Silicium
+          path: Mu-Silicium
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm mtools device-tree-compiler python3
+      - name: Fetch kernel payload and UEFI
+        run: |
+          gh run download ${{ inputs.kernel_run }} -R ${{ github.repository }} -n xun-kernel-payload -D kp
+          gh run download ${{ inputs.uefi_run }} -R ${{ github.repository }} -n xun-uefi -D fw
+          find kp fw -type f | head -50
+      - name: Patch kernel with probe, rebuild payload, make boot.img
+        run: |
+          set -e
+          KERNEL=$(find kp -name kernel.macho | head -n 1)
+          PAYLOAD=$(find kp -name payload.img | head -n 1)
+          FD=$(find fw -name SILICIUM_UEFI.fd | head -n 1)
+          cp "$KERNEL" patched.macho
+          export UNIXNU_UEFI=$GITHUB_WORKSPACE/Mu-Silicium
+          # Calls made by _arm_init, in order (for choosing bisection points)
+          LLVM_OBJDUMP=$(command -v llvm-objdump || ls /usr/bin/llvm-objdump-* | head -n 1)
+          LLVM_NM=$(command -v llvm-nm || ls /usr/bin/llvm-nm-* | head -n 1)
+          $LLVM_NM -n patched.macho > symbols.txt || true
+          $LLVM_OBJDUMP -d --disassemble-symbols=_arm_init patched.macho | grep -E '\sbl\s' > arm_init_calls.txt || true
+          wc -l arm_init_calls.txt
+          if [ "${{ inputs.no_probe }}" != "true" ]; then
+            ARGS="--reset-delay ${{ inputs.delay }}"
+            if [ -n "${{ inputs.reset_after }}" ]; then
+              ARGS="$ARGS --reset-after ${{ inputs.reset_after }} --in ${{ inputs.reset_in }} --occurrence ${{ inputs.occurrence }}"
+              if [ "${{ inputs.reset_before }}" = "true" ]; then ARGS="$ARGS --reset-before"; fi
+            fi
+            python3 IpadOS-Xun/scripts/patch-xnu-entry-probe.py patched.macho $ARGS
+          fi
+          cp "$PAYLOAD" payload.img
+          if [ "${{ inputs.no_probe }}" != "true" ]; then
+            mdel -i payload.img ::EFI/UniXNU/Payloads/kernel.macho
+            mcopy -i payload.img patched.macho ::EFI/UniXNU/Payloads/kernel.macho
+          fi
+          if [ "${{ inputs.fix_armio }}" = "true" ] || [ "${{ inputs.fix_cluster }}" = "true" ]; then
+            mcopy -i payload.img ::EFI/UniXNU/Payloads/kernel.macho.adt adt.bin
+            python3 -c "
+            import struct
+            from pathlib import Path
+            p = Path('adt.bin')
+            b = p.read_bytes()
+            if '${{ inputs.fix_armio }}' == 'true':
+                ARMIO_BASE, ARMIO_SIZE = 0x04000000, 0x10000000
+                repls = [
+                    (struct.pack('<32sI', b'ranges', 24) + struct.pack('<QQQ', 0, 0, 0x20000000),
+                     struct.pack('<32sI', b'ranges', 24) + struct.pack('<QQQ', 0, ARMIO_BASE, ARMIO_SIZE), 'arm-io ranges'),
+                    (struct.pack('<4Q', 0x0F200000, 0x10000, 0x0F300000, 0x100000),
+                     struct.pack('<4Q', 0x0F200000 - ARMIO_BASE, 0x10000, 0x0F300000 - ARMIO_BASE, 0x100000), 'intc reg'),
+                    (struct.pack('<QQ', 0x04744000, 0x1000), struct.pack('<QQ', 0x04744000 - ARMIO_BASE, 0x1000), 'sdhci reg'),
+                ]
+                for old, new, label in repls:
+                    cnt = b.count(old)
+                    assert cnt == 1, f'{label}: expected 1 match, got {cnt}'
+                    b = b.replace(old, new, 1)
+            if '${{ inputs.fix_cluster }}' == 'true':
+                old_ct = struct.pack('<32s', b'cluster-type')
+                new_ct = struct.pack('<32s', b'x-cluster-ty')
+                cnt = b.count(old_ct)
+                assert cnt == 8, f'cluster-type: expected 8 matches, got {cnt}'
+                b = b.replace(old_ct, new_ct)
+            p.write_bytes(b)
+            print('Patched adt.bin successfully')
+            "
+            python3 IpadOS-Xun/scripts/inspect-adt.py adt.bin --smp
+            mdel -i payload.img ::EFI/UniXNU/Payloads/kernel.macho.adt
+            mcopy -i payload.img adt.bin ::EFI/UniXNU/Payloads/kernel.macho.adt
+          fi
+          if [ "${{ inputs.fix_bootargs }}" = "true" ]; then
+            mcopy -i payload.img ::EFI/UniXNU/unixnu.toml unixnu.toml
+            python3 -c "
+            from pathlib import Path
+            p = Path('unixnu.toml')
+            s = p.read_text()
+            for bad in [' cs_enforcement_disable=1', 'cs_enforcement_disable=1', ' amfi_get_out_of_my_way=1', 'amfi_get_out_of_my_way=1']:
+                s = s.replace(bad, '')
+            p.write_text(s)
+            print('Updated unixnu.toml:\n' + s)
+            "
+            mdel -i payload.img ::EFI/UniXNU/unixnu.toml
+            mcopy -i payload.img unixnu.toml ::EFI/UniXNU/unixnu.toml
+          fi
+          mdir -i payload.img ::EFI/UniXNU/Payloads
+          mkdir -p out
+          python3 IpadOS-Xun/scripts/make-xun-bootimg.py --fd "$FD" --dtb IpadOS-Xun/uefi/Resources/DTBs/xun.dtb --ramdisk payload.img -o out/boot.img
+          ls -l out/boot.img
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bisect-bootimg
+          path: |
+            out/boot.img
+            arm_init_calls.txt
+            symbols.txt

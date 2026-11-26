@@ -1,0 +1,282 @@
+name: Build Xun iPadOS Port (UEFI & XNU)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: xun-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-uefi:
+    name: Build Mu-Silicium UEFI (xunPkg)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out IpadOS-Xun
+        uses: actions/checkout@v4
+        with:
+          path: IpadOS-Xun
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          path: UniXNU
+          submodules: recursive
+
+      - name: Check out Mu-Silicium
+        uses: actions/checkout@v4
+        with:
+          repository: Project-Silicium/Mu-Silicium
+          path: Mu-Silicium
+          submodules: recursive
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld llvm uuid-dev acpica-tools \
+            mtools dosfstools device-tree-compiler git python3 python3-pip
+
+      - name: Scaffold & Verify xunPkg in Mu-Silicium
+        run: |
+          mkdir -p Mu-Silicium/Platforms/Xiaomi/xunPkg
+          mkdir -p Mu-Silicium/Resources/Configs
+          mkdir -p Mu-Silicium/Resources/DTBs
+          if [ -d "IpadOS-Xun/uefi/xunPkg" ]; then
+            cp -r IpadOS-Xun/uefi/xunPkg/* Mu-Silicium/Platforms/Xiaomi/xunPkg/
+          fi
+          if [ -d "IpadOS-Xun/uefi/Resources" ]; then
+            cp -r IpadOS-Xun/uefi/Resources/* Mu-Silicium/Resources/
+          fi
+          if [ -d "UniXNU/package/UniXNUPkg" ]; then
+            cp -r UniXNU/package/UniXNUPkg Mu-Silicium/
+          fi
+          if [ -d "UniXNU/drivers/DarwinBoot" ]; then
+            cp -r UniXNU/drivers/DarwinBoot Mu-Silicium/DarwinBootPkg
+          fi
+          export UNIXNU_UEFI="$GITHUB_WORKSPACE/Mu-Silicium"
+          python3 IpadOS-Xun/scripts/patch-mu-sec-entryarg.py "$UNIXNU_UEFI"
+          python3 IpadOS-Xun/scripts/check-xun.py
+
+      - name: Build UEFI Firmware Volume (SILICIUM_UEFI.fd)
+        working-directory: UniXNU
+        run: |
+          python3 unixnu build firmware --uefi ../Mu-Silicium -D ../IpadOS-Xun
+
+      - name: Upload UEFI Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xun-uefi
+          path: |
+            Mu-Silicium/Build/xunPkg/**/FV/SILICIUM_UEFI.fd
+            UniXNU/out/**/*.fd
+          if-no-files-found: warn
+
+  build-xnu:
+    name: Build 4K XNU Kernel & Device Tree (iPadOS 27.2.1)
+    # macos-latest tracks the newest stable runner image. The kernel needs Xcode 26 / Clang 20+
+    # for -Wno-unnecessary-virtual-specifier, and the step below picks the newest Xcode_26 on the
+    # image; pin this line to an explicit image only if a runner bump regresses the build.
+    runs-on: macos-latest
+    timeout-minutes: 180
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+    steps:
+      - name: Check out IpadOS-Xun
+        uses: actions/checkout@v4
+        with:
+          path: IpadOS-Xun
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          path: UniXNU
+          submodules: recursive
+
+      - name: Check out Mu-Silicium (Font.h for panic screen)
+        uses: actions/checkout@v4
+        with:
+          repository: Project-Silicium/Mu-Silicium
+          path: Mu-Silicium
+
+      - name: Install Toolchain Tools
+        run: |
+          brew install llvm lld mtools dtc lzfse
+          if ! command -v unifdef >/dev/null; then
+            brew install unifdef
+            echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Select the newest Xcode & iphoneos SDK
+        run: |
+          # Newest Xcode_26 if the image has one, otherwise the default. Never fail here: a runner
+          # that ships Xcode 27 still builds this kernel, it is Clang >= 20 that matters.
+          XCODE_APP=$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "$XCODE_APP" ]; then XCODE_APP=/Applications/Xcode.app; fi
+          echo "Using Xcode: $XCODE_APP"
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+          clang --version | head -n 1
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: Generate Apple Device Trees (.adt)
+        run: |
+          mkdir -p IpadOS-Xun/out/xun
+          python3 IpadOS-Xun/scripts/make-xun-adt.py --dram-size 0x200000000 --owned-memory-size 0x1B8000000 --ipad-identity --root-match-volume-uuid 043A9710-08A4-44CC-BA81-29F41495EE9F --output IpadOS-Xun/out/xun/xun-single.adt --cpu-regs 0
+          python3 IpadOS-Xun/scripts/make-xun-adt.py --dram-size 0x200000000 --owned-memory-size 0x1B8000000 --ipad-identity --root-match-volume-uuid 043A9710-08A4-44CC-BA81-29F41495EE9F --output IpadOS-Xun/out/xun/xun-smp.adt --cpu-regs 0,1,2,3,0x100,0x101,0x102,0x103
+          python3 IpadOS-Xun/scripts/inspect-adt.py IpadOS-Xun/out/xun/xun-single.adt
+          python3 IpadOS-Xun/scripts/inspect-adt.py IpadOS-Xun/out/xun/xun-smp.adt --smp
+
+      - name: Fetch & Verify Xun Touch Firmware Blobs
+        run: |
+          mkdir -p IpadOS-Xun/.cache/firmware/xun
+          BASE="https://github.com/robsonsilv4/android_vendor_xiaomi_xun/raw/lineage-22.2/proprietary/vendor/firmware"
+          curl -fsSL "$BASE/focaltech_ts_fw_boe_ft8203.bin" -o IpadOS-Xun/.cache/firmware/xun/focaltech_ts_fw_boe_ft8203.bin
+          curl -fsSL "$BASE/focaltech_ts_fw_huaxing_ft8203.bin" -o IpadOS-Xun/.cache/firmware/xun/focaltech_ts_fw_huaxing_ft8203.bin
+          curl -fsSL "$BASE/novatek_ts_fw_tianma.bin" -o IpadOS-Xun/.cache/firmware/xun/novatek_ts_fw_tianma.bin
+          python3 IpadOS-Xun/scripts/gen-xun-touch-firmware.py --require-blobs
+
+      - name: Configure & Build XNU Kernel (MACHINE_CONFIGS=BCM2837)
+        working-directory: UniXNU
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UNIXNU_UEFI: ${{ github.workspace }}/Mu-Silicium
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/build-xnu-4k-baseline.sh')
+          text = p.read_text()
+          old = '{ [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ] && [ "${XNU_SOURCE_STORAGE:-0}" != 1 ]; }'
+          new = '{ [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ] && [ "${XNU_SOURCE_STORAGE:-0}" != 1 ] && [ "${XNU_NATIVE_UFS:-0}" != 1 ]; }'
+          assert old in text, 'Expected OWNER_ROOT_TRUST guard not found in build-xnu-4k-baseline.sh'
+          p.write_text(text.replace(old, new, 1))
+
+          cap = Path('patches/xnu/native-4k-bootstrap-capacity.patch')
+          cap_text = cap.read_text()
+          cap_old = '#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 16)'
+          cap_new = '#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 24)'
+          assert cap_old in cap_text, 'Expected BOOTSTRAP_TABLE_SIZE 16-page entry missing'
+          cap.write_text(cap_text.replace(cap_old, cap_new, 1))
+          PY
+          python3 unixnu ipsw fetch KernelCache OS -D ../IpadOS-Xun
+          cp ../IpadOS-Xun/package/xnu-patches/native-smp-type-clusters.patch patches/xnu/
+          python3 unixnu defconfig xun_defconfig -D ../IpadOS-Xun
+          python3 ../IpadOS-Xun/scripts/make-xun-data-seed.py --output out/xun-data.dbr --device ../IpadOS-Xun --unixnu . --config auto
+          python3 unixnu build kernel -D ../IpadOS-Xun
+          # Second pass links the real ShengPlatformPower.cpp against pass-1's kernel.macho instead of FirstPassStub.c.
+          python3 unixnu build kernel -D ../IpadOS-Xun
+
+      - name: Fetch Trust Caches & Build Payload Volume (payload.img)
+        working-directory: UniXNU
+        env:
+          UNIXNU_UEFI: ${{ github.workspace }}/Mu-Silicium
+          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
+          python3 unixnu ipsw fetch StaticTrustCache Cryptex1,SystemTrustCache -D ../IpadOS-Xun
+          python3 - <<'PY'
+          import hashlib, struct, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from unixnu.ipsw import im4p_payload
+          ipsw_dir = Path('out/ipsw/24B156')
+          static_tc = im4p_payload((ipsw_dir / '141-09394-225.dmg.aea.trustcache').read_bytes())
+          system_tc = im4p_payload((ipsw_dir / '141-10410-235.dmg.aea.trustcache').read_bytes())
+          bundle = struct.pack('<3I', 2, 12, 12 + len(static_tc)) + static_tc + system_tc
+          sha = hashlib.sha256(bundle).hexdigest()
+          # The digest of the 24B156 bundle is not pinned yet; the build prints it so it can be
+          # written into board.toml [payload] trust_cache_sha256 once it is the one that boots.
+          expected = None
+          assert expected is None or sha == expected, f'Trust cache bundle hash mismatch: {sha} != {expected}'
+          Path('out/original-static-system.bundle').write_bytes(bundle)
+          print(f'Staged trust cache bundle ({len(bundle)} bytes, sha256 {sha})')
+          PY
+          python3 unixnu build payload -D ../IpadOS-Xun --trust-cache out/original-static-system.bundle --data-ramdisk out/xun-data.dbr --skip-setup
+
+      - name: Upload Kernel, Payload & ADT Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xun-kernel-payload
+          path: |
+            UniXNU/out/**/kernel.macho
+            UniXNU/out/**/kernel/kernel.*
+            UniXNU/out/**/payload/payload.img
+            UniXNU/out/**/payload/payload.json
+            IpadOS-Xun/out/xun/*.adt
+          if-no-files-found: warn
+
+  package-bootimg:
+    name: Package Android Boot Image (boot.img)
+    needs: [build-uefi, build-xnu]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out IpadOS-Xun
+        uses: actions/checkout@v4
+        with:
+          path: IpadOS-Xun
+
+      - name: Check out UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          path: UniXNU
+          submodules: recursive
+
+      - name: Check out Mu-Silicium
+        uses: actions/checkout@v4
+        with:
+          repository: Project-Silicium/Mu-Silicium
+          path: Mu-Silicium
+
+      - name: Install Packaging Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm device-tree-compiler python3
+
+      - name: Download UEFI & Payload Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ci-artifacts
+
+      - name: Stage Mu-Silicium Resources & Assemble boot.img
+        working-directory: UniXNU
+        run: |
+          cp -r ../IpadOS-Xun/uefi/Resources/* ../Mu-Silicium/Resources/
+          FD_PATH=$(find ../ci-artifacts/xun-uefi -name 'SILICIUM_UEFI.fd' | head -n 1)
+          RAMDISK_PATH=$(find ../ci-artifacts/xun-kernel-payload -name 'payload.img' | head -n 1)
+          echo "Using FD: $FD_PATH"
+          echo "Using Ramdisk: $RAMDISK_PATH"
+          test -f "$FD_PATH"
+          test -f "$RAMDISK_PATH"
+          mkdir -p ../out/xun
+          python3 ../IpadOS-Xun/scripts/make-xun-bootimg.py \
+            --fd "$FD_PATH" \
+            --dtb ../Mu-Silicium/Resources/DTBs/xun.dtb \
+            --ramdisk "$RAMDISK_PATH" \
+            -o ../out/xun/boot.img
+          SIZE=$(wc -c < ../out/xun/boot.img)
+          echo "boot.img size: $SIZE bytes"
+          python3 -c "import sys; s=$SIZE; limit=64*1024*1024; print(f'Size check: {s} / {limit} ({s/1048576:.2f} MiB)'); sys.exit(0 if s <= limit else 1)"
+
+      - name: Upload Boot Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xun-bootimg
+          path: |
+            out/xun/boot.img
+            out/xun/boot.json
+            ci-artifacts/xun-kernel-payload/**/payload.json
+          if-no-files-found: error
