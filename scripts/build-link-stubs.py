@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Archive the stub objects the kernel links against.
 
-Four archives come out of here:
+Three archives come out of here:
 
   build/link-stubs/libLinkStubs.a          -- the no-op probe hooks, named by
                                               CONFIG_XNU_EXTRA_LD_ARCHIVES
   build/verified-root-key/libVerifiedRootKey.a -- the verified-root probe
   build/ram-block-stubs/libRamBlockStubs.a -- the RamBlock provider hooks
-  build/ram-block/libRamBlock.a            -- the same hooks, at the path the XNU build script
-                                              insists on
 
 Why RamBlockStubs.o also goes into libLinkStubs.a
 -------------------------------------------------
@@ -23,24 +21,19 @@ hardcoded. Rather than patch someone else's build script for a fourth archive, t
 are added as a second member of libLinkStubs.a, which is already linked. One path, one archive,
 nothing extra to teach the framework.
 
-Why libRamBlock.a exists
-------------------------
-Independently of that, build-xnu-4k-baseline.sh hardcodes this, for NATIVE_RAM_BLOCK=1:
+There is no build/ram-block/libRamBlock.a here
+----------------------------------------------
+build-xnu-4k-baseline.sh wants one when NATIVE_RAM_BLOCK=1 - but only when XNU_SOURCE_STORAGE is 0:
 
-    RAM_BLOCK_ARCHIVE=$ROOT/build/ram-block/libRamBlock.a
-    test -f "$RAM_BLOCK_ARCHIVE"
-    ... -Wl,-force_load,$RAM_BLOCK_ARCHIVE
+    if [ "$NATIVE_RAM_BLOCK" = 1 ] && [ "${XNU_SOURCE_STORAGE:-0}" != 1 ]; then
+      RAM_BLOCK_ARCHIVE=$ROOT/build/ram-block/libRamBlock.a
+      test -f "$RAM_BLOCK_ARCHIVE"
 
-The file has to exist even though the symbols in it are already satisfied by libLinkStubs.a, and
-drivers/RamBlock - a UniXNU submodule this repository does not carry - is what would normally put
-it there. Leaving it absent stopped the kernel step at
-
-    build-xnu-4k-baseline.sh: line 803: test -f "$RAM_BLOCK_ARCHIVE" failed
-
-so the same stub object is also archived under that name. force_load then pulls in definitions that
-libLinkStubs.a already provides; the linker resolves each symbol once and does not mind the second
-copy, so nothing about the linked kernel changes. This is a stand-in for the provider, not a
-pretence that one exists - retire it when drivers/RamBlock becomes part of this build.
+xun_defconfig sets CONFIG_XNU_SOURCE_STORAGE=y, so that block never runs: no existence check, no
+force_load, and no -DXNU_NATIVE_RAM_BLOCK=1 on the personality object. The owner-data patch then
+takes its #else arm and reads the Data seed from /dev/md0 through mdevlookup()/mdevgetrange(),
+which is the path UniXNU-muyu boots with. The hooks below stay because the weak fallbacks cost
+nothing and keep the archive honest if the board ever goes back to the alias path.
 
 The separate libRamBlockStubs.a is still emitted, because it is what a build that links the
 archives itself (scripts/build-macos-local.sh with XNU_EXTRA_LD_ARCHIVES) picks up, and because a
@@ -85,9 +78,6 @@ def main():
     archive(ROOT / 'build/link-stubs/libLinkStubs.a', [link_stubs, ram_block])
     archive(ROOT / 'build/verified-root-key/libVerifiedRootKey.a', [verified_root])
     archive(ROOT / 'build/ram-block-stubs/libRamBlockStubs.a', [ram_block])
-    # And again under the name build-xnu-4k-baseline.sh hardcodes for NATIVE_RAM_BLOCK=1, which it
-    # only ever tests for existence. See the module docstring.
-    archive(ROOT / 'build/ram-block/libRamBlock.a', [ram_block])
 
 
 if __name__ == '__main__':

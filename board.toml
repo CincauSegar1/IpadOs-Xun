@@ -123,13 +123,18 @@ archives = [
   "build-arm-driver.py ArmDTPlatform",
   "build-xun-armcpu.py",
   "build-arm-driver.py SoftwareAES",
-  # NativeEmmc: Qualcomm SDHCI MSM (sdhci@4744000) for eMMC 5.1
-  "build-xun-emmc.py",
+  # NativeEmmc: Qualcomm SDHCI MSM (sdhci@4744000) for eMMC 5.1, plus IOBlockStorageDevice
+  # compiled from the pinned public IOStorageFamily sources. It replaces build-xun-emmc.py, which
+  # compiled the driver alone and left the six base-class symbols to be aliased onto kernelcache
+  # addresses - something 24B156 cannot support, because its kernelcache is a stripped MH_FILESET
+  # with no symbol table at all. See the script's docstring and package/SourceStorage.cpp.
+  "build-xun-source-storage.py",
   # No build-xun-ramblock.py here. The RamBlock component is a UniXNU submodule
   # (UniXNU/RamBlock), it is not in this board's components include list, and this repository
-  # cannot build it. CONFIG_XNU_NATIVE_RAM_BLOCK is still on because the owner-data patch calls
-  # those hooks unconditionally, so package/RamBlockStubs.c supplies weak fallbacks instead -
-  # see build-link-stubs.py below.
+  # cannot build it. build-xun-source-storage.py compiles NativeRamBlock.cpp only when that
+  # checkout happens to be present. With CONFIG_XNU_SOURCE_STORAGE=y the owner-data patch reads
+  # the Data seed from /dev/md0 through mdevlookup(), not through the NativeRamBlock class, so
+  # nothing here requires it; package/RamBlockStubs.c keeps the weak hooks resolvable anyway.
   "build-software-aes-bindings.py",
   "build-libpthread-kernel.py",
   "build-link-stubs.py",

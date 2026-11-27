@@ -29,8 +29,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# UNIXNU_DEVICE first, as scripts/xun_storage_abi.py read_slide_from_board() already does, then the
-# layout this file has when it is run from the device repository instead of the assembled tree.
+# UNIXNU_DEVICE first, as the board resolver does, then the layout this file has when it is run
+# from the device repository instead of the assembled tree.
 _CANDIDATES = (
     os.environ.get('UNIXNU_DEVICE'),
     ROOT,

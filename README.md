@@ -240,28 +240,14 @@ hardware never reported. They are compiled into `build/ram-block-stubs/libRamBlo
 `scripts/build-link-stubs.py`. For the same reason `board.toml` does not list
 `build-xun-ramblock.py`: there is no source for it to compile here.
 
-The same stub object is also archived as `build/ram-block/libRamBlock.a`, because
-`build-xnu-4k-baseline.sh` hardcodes that path for `NATIVE_RAM_BLOCK=1` and only tests it for
-existence:
+#### Storage: IOBlockStorageDevice compiled from source
 
-```sh
-RAM_BLOCK_ARCHIVE=$ROOT/build/ram-block/libRamBlock.a
-test -f "$RAM_BLOCK_ARCHIVE"
-```
+`NativeEmmcBlock` subclasses `IOBlockStorageDevice`, which lives in `IOStorageFamily` — a kext that
+is not linked into the kernel. The iPadOS 17 line resolved the six base-class symbols this needs
+(`vtable`, `ctor`, `dtor`, `init`, `getProperty`, `doUnmap`) by reading the class vtable out of the
+kernelcache and aliasing the mangled names onto the addresses found there.
 
-Without the file the kernel step stopped at `build-xnu-4k-baseline.sh: line 803: test -f
-"$RAM_BLOCK_ARCHIVE" failed`, even though `libLinkStubs.a` already defined both symbols. `force_load`
-then pulls in a second copy that the linker resolves and ignores, so the linked kernel is unchanged.
-It is a stand-in for the provider, not a claim that one exists — drop it once `drivers/RamBlock`
-becomes part of this build.
-
-#### Why the storage-ABI audit is gone
-
-`build-xun-emmc.py` used to prove `NativeEmmcBlock`'s 190-slot vtable against the stock
-kernelcache before compiling it — walking `__PRELINK_INFO`, matching every slot against the
-symbol table of `com.apple.iokit.IOStorageFamily`. That was written for the original iPadOS 17.7.11
-target, whose kernelcache is a single Mach-O with a symbol table. It cannot run against 24B156, and
-the measurements leave no room for interpretation:
+That cannot work on 24B156, and the measurements leave no room for interpretation:
 
 | Probe on the real 24B156 kernelcache | Result |
 |---|---|
@@ -269,15 +255,46 @@ the measurements leave no room for interpretation:
 | `subtype` | `0xc0000002` (arm64e), not the `0` the parser required |
 | `LC_SYMTAB` `nsyms` in the fileset and in every kext | `0` |
 | Mangled name of the class vtable symbol, across all 66,715,648 bytes | absent |
-| Runs of 190 chained-fixup slot entries | none |
+| Runs of 190 chained-fixup slot entries that all decode to function entries | none (longest: 124) |
 
-The vtable is not in the image to be checked against. It does not need to be: the driver names only
-the five base methods it overrides (`init`, `probe`, `start`, `stop`, `free`), and the linker fills
-every remaining slot from the IOStorageFamily the kernel already carries. The layout check that
-matters is the one muyu performs at run time in `package/SourceStorage.cpp`, comparing
-`storageParent->getClassSize()` against `sizeof(IOBlockStorageDevice)` and panicking on a mismatch —
-that tests the family actually running on the device rather than a fixture measured from another
-build. `scripts/xun_storage_abi.py` keeps the compile-record plumbing and drops the audit.
+The audit had nothing to match against: with no symbol table, the very thing that distinguishes the
+right vtable from a wrong one is what was stripped. Scanning for a 190-slot run by shape alone found
+four structurally valid candidates and no way to tell them apart.
+
+So the six symbols are no longer looked for. `scripts/build-xun-source-storage.py` compiles the
+pinned public `IOBlockStorageDevice.cpp` from `refer/IOStorageFamily` (revision `e45fbe30`, the same
+pin `feeds.toml` carries), so they are defined by our own archive. The remaining problem is naming,
+and it is solved where the real data is — at run time, through `OSMetaClass`:
+
+```cpp
+// the registration macro in the public source, replaced by the builder
+OSDefineMetaClassWithInit(IOBlockStorageDevice, IOService, )
+IOBlockStorageDevice::MetaClass::MetaClass()
+    : OSMetaClass("XunBlockStorageDevice", native_source_storage_parent(),
+                  sizeof(IOBlockStorageDevice)) {}
+```
+
+`package/SourceStorage.cpp`, called from `bsd_init()` by patch `xun-source-storage-start.patch`,
+loads `com.apple.iokit.IOStorageFamily`, looks `IOBlockStorageDevice` up by name with
+`OSMetaClass::getMetaClassWithName()`, and hands that metaclass to the source class as its
+superclass — so the source class hangs *below* the original instead of colliding with it. It then
+compares `storageParent->getClassSize()` with `sizeof(IOBlockStorageDevice)` and panics if they
+disagree: at that point every field access in `NativeEmmcBlock` would be a silent misread of the
+eMMC window. This tests the family actually running on the device, not a fixture measured from
+another build.
+
+`__mod_init_func` is stripped from the three storage objects and `__GLOBAL__sub_I_<source>` is
+globalised instead, because the kernel's own start-up cannot run a static initialiser for a class
+whose superclass does not exist yet; `SourceStorage.cpp` calls them itself, after the load and
+inside `preModLoad`/`postModLoad`. This is the same design UniXNU-muyu uses
+(`scripts/build-sheng-source-storage.py`), and it is why `drivers/ShengUfs` — a UFS driver for a SoC
+this board does not have — is not needed here.
+
+`CONFIG_XNU_SOURCE_STORAGE=y` also turns off the `libRamBlock.a` existence check in
+`build-xnu-4k-baseline.sh` (its block is gated on `SOURCE_STORAGE != 1`) and leaves
+`-DXNU_NATIVE_RAM_BLOCK=1` off the personality object, so `offline-owner-systemos-mount.patch` takes
+its `#else` arm and reads the Data seed from `/dev/md0` through `mdevlookup()`/`mdevgetrange()` —
+the path muyu boots with.
 
 Local builds do not depend on any of this: `scripts/build-macos-local.sh` is the same pipeline
 driven from your own machine, and it is what the flashing guide uses.

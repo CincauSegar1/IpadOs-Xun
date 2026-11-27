@@ -18,10 +18,9 @@ XNU_SHENG_PMGR, and those make the kernel *require* archives (corecrypto, RamBlo
 only linked when BOOTSTRAP=0. So the bootstrap link cannot succeed by construction, and it dies
 earlier than the design assumes - before iokit/Kernel/IOPlatformExpert.cpp has been compiled.
 
-Without IOPlatformExpert.cpo.json, scripts/build-xun-emmc.py stops with "Missing ...cpo.json", no
-libXunEmmc.a is produced, and the real pass then fails at the link with seven undefined symbols
-(native_verified_block_*, native_ram_block_*) whose providers live in that archive. One cause, seven
-symptoms, none of them pointing at the bootstrap pass.
+Without IOPlatformExpert.cpo.json, scripts/build-xun-source-storage.py stops with "Missing ...cpo.json"
+and the real pass then fails at the link. One cause, and the symptoms never point at the bootstrap
+pass.
 
 What this changes
 -----------------

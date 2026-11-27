@@ -206,7 +206,8 @@ jobs:
           # compile records from it, but on this board that pass cannot link: KERNEL_EXTRA_ARCHIVES
           # is gated on BOOTSTRAP=0 while the defconfig makes the corecrypto/RamBlock/PMGR archives
           # mandatory. Skip the link there so every object - including the IOPlatformExpert.cpo.json
-          # that scripts/build-xun-emmc.py reads - is compiled. See the script for the whole chain.
+          # that scripts/build-xun-source-storage.py reads - is compiled. See the script for the
+          # whole chain.
           python3 ../IpadOS-Xun/scripts/apply-bootstrap-link-skip.py .
           python3 unixnu build kernel -D ../IpadOS-Xun
           # Second pass links the real ShengPlatformPower.cpp against pass-1's kernel.macho instead of FirstPassStub.c.
