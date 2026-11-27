@@ -240,6 +240,21 @@ hardware never reported. They are compiled into `build/ram-block-stubs/libRamBlo
 `scripts/build-link-stubs.py`. For the same reason `board.toml` does not list
 `build-xun-ramblock.py`: there is no source for it to compile here.
 
+The same stub object is also archived as `build/ram-block/libRamBlock.a`, because
+`build-xnu-4k-baseline.sh` hardcodes that path for `NATIVE_RAM_BLOCK=1` and only tests it for
+existence:
+
+```sh
+RAM_BLOCK_ARCHIVE=$ROOT/build/ram-block/libRamBlock.a
+test -f "$RAM_BLOCK_ARCHIVE"
+```
+
+Without the file the kernel step stopped at `build-xnu-4k-baseline.sh: line 803: test -f
+"$RAM_BLOCK_ARCHIVE" failed`, even though `libLinkStubs.a` already defined both symbols. `force_load`
+then pulls in a second copy that the linker resolves and ignores, so the linked kernel is unchanged.
+It is a stand-in for the provider, not a claim that one exists — drop it once `drivers/RamBlock`
+becomes part of this build.
+
 #### Why the storage-ABI audit is gone
 
 `build-xun-emmc.py` used to prove `NativeEmmcBlock`'s 190-slot vtable against the stock
