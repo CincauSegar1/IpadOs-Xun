@@ -15,10 +15,42 @@ board.toml already records the values the framework itself checks, under [kernel
 
 This module is the only place that knows how to get at them, so the next time the OS target moves
 there is one pin to update and nothing to keep in step by hand.
+
+Finding board.toml
+------------------
+These scripts do not run from the device repository. `unixnu/tree.py` copies every `scripts/`
+directory into `out/xun/tree/scripts/`, and only the drivers, kits and patches are linked - so a
+script executing there has `board.toml` neither beside it nor one directory up. The framework
+exports UNIXNU_DEVICE for the archive step, and that is the authoritative answer; the path list
+below is the fallback for a run outside it (a local build, or a script invoked by hand).
 """
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# UNIXNU_DEVICE first, as scripts/xun_storage_abi.py read_slide_from_board() already does, then the
+# layout this file has when it is run from the device repository instead of the assembled tree.
+_CANDIDATES = (
+    os.environ.get('UNIXNU_DEVICE'),
+    ROOT,
+    ROOT / 'IpadOS-Xun',
+    ROOT.parent,
+    ROOT.parent / 'IpadOS-Xun',
+)
+
+
+def _board_toml_path():
+    tried = []
+    for candidate in _CANDIDATES:
+        if not candidate:
+            continue
+        path = Path(candidate) / 'board.toml'
+        tried.append(str(path))
+        if path.is_file():
+            return path
+    raise SystemExit('kernelcache pin: no board.toml found. Looked in:\n  ' + '\n  '.join(tried) +
+                     '\nSet UNIXNU_DEVICE to the device repository, or run this from it.')
 
 
 def _board_toml():
@@ -26,7 +58,7 @@ def _board_toml():
         import tomllib
     except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
         import tomli as tomllib
-    return tomllib.loads((ROOT / 'board.toml').read_text())
+    return tomllib.loads(_board_toml_path().read_text())
 
 
 def _prelink():
