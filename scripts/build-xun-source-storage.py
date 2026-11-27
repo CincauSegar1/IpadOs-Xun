@@ -181,8 +181,8 @@ OSDefineOperatorMethods(IOBlockStorageDevice)
 
     includes = ['-I', str(out / 'headers/include'), '-I', str(tree / '.cache/xnu-work/osfmk')]
     flags = ['-DNATIVE_EMMC_SOURCE_API=1']
-    if os.environ.get('UNIXNU_IOS_VERSION', '0').split('.')[0].isdigit() and \
-            int(os.environ['UNIXNU_IOS_VERSION'].split('.')[0]) >= 26:
+    _ios_ver = os.environ.get('UNIXNU_IOS_VERSION', '0').split('.')[0]
+    if _ios_ver.isdigit() and int(_ios_ver) >= 26:
         # The source path does not run BootProgress's process worker; the UFS/RAM providers reuse
         # its native capture code from a worker they own.
         flags.append('-DNATIVE_BOOT_PROCESS_CAPTURE=1')
