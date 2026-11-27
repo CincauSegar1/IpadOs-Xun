@@ -209,11 +209,11 @@ jobs:
           # that scripts/build-xun-source-storage.py reads - is compiled. See the script for the
           # whole chain.
           python3 ../IpadOS-Xun/scripts/apply-bootstrap-link-skip.py .
-          # Patch fileset_layout.py in all locations before building so prelink diagnostics are visible.
+          # Patch fileset_layout.py before building to dynamically relocate __DATA past __LINKEDIT when colliding.
           python3 ../IpadOS-Xun/scripts/debug-patch-layout.py kits/XnuPrelink/fileset_layout.py
           python3 unixnu build kernel -D ../IpadOS-Xun || { [ -f out/xun/logs/prelink.log ] && tail -n 100 out/xun/logs/prelink.log; exit 1; }
           # Second pass links the real ShengPlatformPower.cpp against pass-1's kernel.macho instead of FirstPassStub.c.
-          python3 unixnu build kernel -D ../IpadOS-Xun
+          python3 unixnu build kernel -D ../IpadOS-Xun || { [ -f out/xun/logs/prelink.log ] && tail -n 100 out/xun/logs/prelink.log; exit 1; }
 
       - name: Fetch Trust Caches & Build Payload Volume (payload.img)
         working-directory: UniXNU
