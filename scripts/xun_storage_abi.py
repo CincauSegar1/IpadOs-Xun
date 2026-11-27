@@ -22,7 +22,10 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import native_prelink as np
 from kernel_target import TRIPLE
 
-ORIGINAL_KERNELCACHE_SHA256 = 'f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7'
+# Pinned in board.toml [kernel.prelink], not here: the literal that used to sit on this line outlived the
+# OS target and made this audit reject the correct 24B156 kernelcache as "not found".
+from kernelcache_pin import kernelcache_sha256
+ORIGINAL_KERNELCACHE_SHA256 = kernelcache_sha256()
 TARGET_ARCH_OBJ_DIR = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT'
 
 
