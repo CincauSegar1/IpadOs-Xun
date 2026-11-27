@@ -109,7 +109,9 @@ def main():
     args = parser.parse_args()
 
     tree = args.tree.resolve()
-    device = (args.device or tree).resolve()
+    # Framework sets UNIXNU_DEVICE env var (kernel.py build_archives); --device overrides it.
+    _env_device = os.environ.get('UNIXNU_DEVICE')
+    device = (args.device or (_env_device and Path(_env_device)) or tree).resolve()
     storage = (args.storage_source or tree / 'refer/IOStorageFamily').resolve()
 
     # The device package is linked into the assembled tree as kits/sheng, and sits beside drivers/
