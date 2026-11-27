@@ -210,6 +210,8 @@ jobs:
           # whole chain.
           python3 ../IpadOS-Xun/scripts/apply-bootstrap-link-skip.py .
           python3 unixnu build kernel -D ../IpadOS-Xun
+          # Patch fileset_layout.py to print which placement causes the overlap, so the error is diagnosable.
+          python3 ../IpadOS-Xun/scripts/debug-patch-layout.py kits/XnuPrelink/fileset_layout.py
           # Second pass links the real ShengPlatformPower.cpp against pass-1's kernel.macho instead of FirstPassStub.c.
           python3 unixnu build kernel -D ../IpadOS-Xun
 
