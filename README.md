@@ -237,7 +237,32 @@ repository. `native_ram_block_volume_seed` and `native_ram_block_gpu_addon` are 
 in the `drivers/RamBlock` submodule of UniXNU, which this repository does not carry. The weak stubs
 return 0, so the Data volume path reports "no seed" instead of inventing a UUID, digest or size the
 hardware never reported. They are compiled into `build/ram-block-stubs/libRamBlockStubs.a` by
-`scripts/build-link-stubs.py`.
+`scripts/build-link-stubs.py`. For the same reason `board.toml` does not list
+`build-xun-ramblock.py`: there is no source for it to compile here.
+
+#### Why the storage-ABI audit is gone
+
+`build-xun-emmc.py` used to prove `NativeEmmcBlock`'s 190-slot vtable against the stock
+kernelcache before compiling it — walking `__PRELINK_INFO`, matching every slot against the
+symbol table of `com.apple.iokit.IOStorageFamily`. That was written for the original iPadOS 17.7.11
+target, whose kernelcache is a single Mach-O with a symbol table. It cannot run against 24B156, and
+the measurements leave no room for interpretation:
+
+| Probe on the real 24B156 kernelcache | Result |
+|---|---|
+| Mach-O kind | `12` (`MH_FILESET`), 239 kext embedded |
+| `subtype` | `0xc0000002` (arm64e), not the `0` the parser required |
+| `LC_SYMTAB` `nsyms` in the fileset and in every kext | `0` |
+| Mangled name of the class vtable symbol, across all 66,715,648 bytes | absent |
+| Runs of 190 chained-fixup slot entries | none |
+
+The vtable is not in the image to be checked against. It does not need to be: the driver names only
+the five base methods it overrides (`init`, `probe`, `start`, `stop`, `free`), and the linker fills
+every remaining slot from the IOStorageFamily the kernel already carries. The layout check that
+matters is the one muyu performs at run time in `package/SourceStorage.cpp`, comparing
+`storageParent->getClassSize()` against `sizeof(IOBlockStorageDevice)` and panicking on a mismatch —
+that tests the family actually running on the device rather than a fixture measured from another
+build. `scripts/xun_storage_abi.py` keeps the compile-record plumbing and drops the audit.
 
 Local builds do not depend on any of this: `scripts/build-macos-local.sh` is the same pipeline
 driven from your own machine, and it is what the flashing guide uses.

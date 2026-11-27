@@ -123,7 +123,12 @@
 - **RamBlock stubs:** `package/RamBlockStubs.c`
   - Weak `native_ram_block_volume_seed` and `native_ram_block_gpu_addon`, signatures copied verbatim from the `offline-owner-systemos-mount.patch` call sites, both returning 0.
   - Their implementation lives in the `drivers/RamBlock` submodule of UniXNU, which this repository does not carry, and no file in the UniXNU family defines them. Returning 0 makes the Data volume path report "no seed" rather than inventing a UUID, digest or size the hardware never reported.
-  - Compiled into `build/ram-block-stubs/libRamBlockStubs.a` by `scripts/build-link-stubs.py`.
+  - Compiled into `build/ram-block-stubs/libRamBlockStubs.a` by `scripts/build-link-stubs.py`. `board.toml` no longer lists `build-xun-ramblock.py`, for the same reason: there is no source here for it to compile.
+- **Storage-ABI audit removed:** `scripts/xun_storage_abi.py`
+  - `build-xun-emmc.py` used to verify `NativeEmmcBlock`'s 190-slot vtable against the stock kernelcache before compiling. That was written for the iPadOS 17.7.11 target, whose kernelcache is a single Mach-O with a symbol table.
+  - Measured on the real 24B156 image, it cannot work: the kernelcache is `MH_FILESET` (kind 12) with 239 embedded kext, `subtype` is `0xc0000002` rather than the `0` `native_prelink.macho()` requires, `nsyms` is 0 in the fileset and in every kext, the mangled vtable symbol name occurs nowhere in the 66,715,648 bytes, and no run of 190 chained-fixup slot entries exists in the file. The vtable is simply not in the image.
+  - It is not needed. The driver names only the five base methods it overrides (`init`, `probe`, `start`, `stop`, `free`); the linker fills the rest from the kernel's own IOStorageFamily. The layout is checked at run time in `package/SourceStorage.cpp` the way muyu does it, by comparing `storageParent->getClassSize()` with `sizeof(IOBlockStorageDevice)` and panicking on a mismatch — which tests the family actually running rather than a fixture from another build.
+  - `compile_storage_driver()` keeps the compile-record flags (target, sysroot, arm64e ABI) that actually make the vtable and branch targets compatible.
 - **Panic & Retained Log Diagnostic Reader:** `UniXNU-xun/scripts/read-xun-log.py`
 
 ### 3c. Where the `[kernel.prelink]` values come from

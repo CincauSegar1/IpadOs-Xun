@@ -125,7 +125,11 @@ archives = [
   "build-arm-driver.py SoftwareAES",
   # NativeEmmc: Qualcomm SDHCI MSM (sdhci@4744000) for eMMC 5.1
   "build-xun-emmc.py",
-  "build-xun-ramblock.py",
+  # No build-xun-ramblock.py here. The RamBlock component is a UniXNU submodule
+  # (UniXNU/RamBlock), it is not in this board's components include list, and this repository
+  # cannot build it. CONFIG_XNU_NATIVE_RAM_BLOCK is still on because the owner-data patch calls
+  # those hooks unconditionally, so package/RamBlockStubs.c supplies weak fallbacks instead -
+  # see build-link-stubs.py below.
   "build-software-aes-bindings.py",
   "build-libpthread-kernel.py",
   "build-link-stubs.py",
